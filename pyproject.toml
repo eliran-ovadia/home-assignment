@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "home-assignment"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",         # Core only — no ORM; see docs/decisions/004
+    "alembic>=1.14",           # Schema migrations via raw SQL
+    "pydantic-settings>=2.6",  # Typed non-sensitive config (ports, log level, etc.)
+    "httpx>=0.28",             # External API calls (async-capable)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "ty",                  # Astral's Rust-based type checker; see docs/decisions/006
+    "pre-commit>=4.0",
+]
+
+# ── Ruff: linting + formatting (replaces flake8 + black + isort) ─────────────
+# See docs/decisions/003-ruff-toolchain.md
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "S",    # flake8-bandit (security)
+]
+ignore = [
+    "S101",  # assert is acceptable in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# ── ty: static type checking (see docs/decisions/006-ty-over-mypy.md) ────────
+[tool.ty]
+python-version = "3.12"
+
+# ── Pytest ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]

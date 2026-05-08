@@ -1,0 +1,40 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Non-sensitive config passed directly.
+      # Secrets (DB password, API keys) must come from the host environment —
+      # never hardcoded here. See docs/decisions/005-secret-manager-over-dotenv.md
+      APP_ENV: development
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: assignment
+      DB_USER: postgres
+      # DB_PASSWORD must be set in the shell: export DB_PASSWORD=...
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src  # live-reload in development
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: assignment
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
