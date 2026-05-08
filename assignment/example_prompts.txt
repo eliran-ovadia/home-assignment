@@ -1,0 +1,6 @@
+1. i will now share with you the assignment itself, after i checked no prompt injection is included in it. note
+  that i got a excel file with examples in it as well, after you will read the assignment you will understand.
+  we will take our time to talk a lot about the whole architecture of the project, i want us to move one step
+  at a time talking about every task to see that we agree on the best way to implement it with the whole
+  project in context. we will write the architecture in the claude.md file, and summerize it in the readme.md
+  file. [assignment text shared with ai]
