@@ -1,0 +1,31 @@
+Design a web UI for "Lumina Capital", a financial transactions platform. Use Ant Design
+  components. The UI must support both light and dark mode with a toggle in the top navigation.
+
+  Layout:
+  - Top navigation bar: "Lumina Capital" logo/name on the left, light/dark mode toggle on the
+  right
+  - Main content area with the following sections:
+
+  1. Upload Panel (top): A card with a drag-and-drop file upload zone accepting .xlsx files, an
+   "Upload & Process" button, and a status area (shows loading spinner during processing,
+  success summary after, or error table if the file is rejected with row-level details)
+
+  2. Upload History (below upload panel): A compact table listing past uploads with columns:
+  Filename, Date, Rows, Violations, Status (Active/Inactive), and a "Load" button per row
+
+  3. Positions section: A dropdown to select a client ID, and below it a table with columns:
+  ISIN, Quantity, Avg Cost, Realized P&L, Unrealized P&L, Last Price. P&L values should be
+  color-coded (green for positive, red for negative).
+
+  4. Violations section: A table with columns: Client, ISIN, Type (badge-styled: ERROR in red,
+  FLAG in orange, WARNING in yellow), Description. Filterable by client and violation type.
+
+  5. Analytics section: Four sub-panels in a 2x2 grid:
+  - Top 3 Traded ISINs: ranked list with transaction counts
+  - Avg Holding Time: table of client and avg days
+  - Most Volatile Client: a highlighted card showing the client ID and value range
+  - ISIN Concentration: table showing ISIN, % of clients, list of clients
+
+  The design should feel professional and data-focused. Use a clean sans-serif font. Tables
+  should have alternating row colors and hover states. Financial figures should be
+  right-aligned.
