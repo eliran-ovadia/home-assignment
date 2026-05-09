@@ -9,8 +9,8 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "sqlalchemy>=2.0",         # Core only — no ORM; see docs/decisions/004
-    "alembic>=1.14",           # Schema migrations via raw SQL
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
     "pydantic-settings>=2.6",  # Typed non-sensitive config (ports, log level, etc.)
     "httpx>=0.28",             # External API calls (async-capable)
 ]

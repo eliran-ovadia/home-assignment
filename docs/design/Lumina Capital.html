@@ -1,0 +1,1195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Lumina Capital — Transactions Platform</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="https://unpkg.com/antd@5.20.6/dist/reset.css" />
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "tnum" 1, "cv11" 1;
+  }
+
+  /* Logo */
+  .lc-logo { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; letter-spacing: -0.01em; font-size: 18px; }
+  .lc-logo-mark { width: 28px; height: 28px; border-radius: 8px;
+    background: conic-gradient(from 200deg at 50% 50%, #6366f1 0deg, #8b5cf6 90deg, #06b6d4 200deg, #6366f1 360deg);
+    position: relative; box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset; }
+  .lc-logo-mark::after { content: ""; position: absolute; inset: 6px; border-radius: 4px;
+    background: var(--lc-logo-inner, #0b0d12); }
+
+  /* Numeric */
+  .num { font-variant-numeric: tabular-nums; text-align: right !important; font-feature-settings: "tnum" 1; }
+  .num-pos { color: #16a34a; }
+  .num-neg { color: #dc2626; }
+  .dark .num-pos { color: #4ade80; }
+  .dark .num-neg { color: #f87171; }
+
+  /* Tables */
+  .lc-table .ant-table-tbody > tr:nth-child(even) > td { background: var(--lc-row-alt); }
+  .lc-table .ant-table-tbody > tr:hover > td,
+  .lc-table .ant-table-tbody > tr.ant-table-row-hover > td { background: var(--lc-row-hover) !important; }
+
+  /* Section heading */
+  .lc-section {
+    margin-bottom: 32px;
+  }
+  .lc-section-title {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 0 14px 0; gap: 12px; flex-wrap: wrap;
+  }
+  .lc-section-title h2 {
+    margin: 0; font-size: 13px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--lc-muted);
+  }
+
+  /* Drag area */
+  .ant-upload-drag { background: var(--lc-drag-bg) !important; border-color: var(--lc-drag-border) !important; }
+  .ant-upload-drag:hover { border-color: #6366f1 !important; }
+
+  /* Volatile card */
+  .lc-volatile {
+    border-radius: 12px; padding: 20px;
+    background:
+      radial-gradient(120% 140% at 0% 0%, rgba(99,102,241,0.18), transparent 50%),
+      radial-gradient(120% 140% at 100% 100%, rgba(6,182,212,0.18), transparent 50%),
+      var(--lc-volatile-bg);
+    border: 1px solid var(--lc-volatile-border);
+  }
+
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .muted { color: var(--lc-muted); }
+
+  /* Bar chart */
+  .lc-bar-row {
+    display: grid;
+    grid-template-columns: minmax(110px, 140px) 1fr minmax(70px, auto);
+    gap: 14px; align-items: center; padding: 8px 0;
+  }
+  .lc-bar-track {
+    height: 10px; border-radius: 5px;
+    background: var(--lc-bar-track);
+    overflow: hidden;
+    position: relative;
+  }
+  .lc-bar-fill {
+    height: 100%; border-radius: 5px;
+    background: linear-gradient(90deg, #6366f1, #06b6d4);
+    transition: width 600ms cubic-bezier(0.2,0.8,0.2,1);
+  }
+  .dark .lc-bar-fill {
+    background: linear-gradient(90deg, #818cf8, #22d3ee);
+  }
+  .lc-bar-label { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .lc-bar-value { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--lc-fg); text-align: right; }
+
+  /* Header sticky */
+  .lc-header {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: saturate(140%) blur(8px);
+    border-bottom: 1px solid var(--lc-divider);
+  }
+
+  .lc-err-table .ant-table-thead > tr > th { background: var(--lc-err-head) !important; }
+
+  .lc-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 980px) {
+    .lc-grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* Upload panel layout */
+  .lc-upload-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+  }
+  @media (max-width: 900px) {
+    .lc-upload-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Ready bar — appears when a file is staged */
+  .lc-ready-bar {
+    margin-top: 12px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px 10px 14px;
+    background: var(--lc-ready-bg);
+    border: 1px solid var(--lc-ready-border);
+    border-radius: 10px;
+    flex-wrap: wrap;
+  }
+  .lc-ready-icon {
+    width: 32px; height: 32px; flex: 0 0 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #6366f1, #06b6d4);
+    color: #fff; font-weight: 700; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
+    letter-spacing: 0.02em;
+  }
+  .lc-ready-meta { min-width: 0; flex: 1 1 220px; line-height: 1.25; }
+  .lc-ready-name {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .lc-ready-sub { font-size: 11px; color: var(--lc-muted); margin-top: 2px; }
+  .lc-demo-link {
+    margin-top: 10px; font-size: 12px; color: var(--lc-muted);
+  }
+  .lc-demo-link a { color: var(--lc-link); cursor: pointer; }
+  .lc-demo-link a:hover { text-decoration: underline; }
+
+  .lc-positions-toolbar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .lc-positions-totals {
+    display: flex; gap: 22px; margin-left: auto; flex-wrap: wrap;
+  }
+  @media (max-width: 720px) {
+    .lc-positions-totals { margin-left: 0; width: 100%; }
+  }
+
+  .lc-violations-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .lc-violations-counts {
+    display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap;
+  }
+
+  .lc-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    background: var(--lc-chip-bg); color: var(--lc-chip-fg);
+  }
+
+  /* Sparkline for volatile card */
+  .lc-spark { width: 100%; height: 56px; display: block; margin-top: 12px; }
+
+  /* Light vars */
+  :root, .light {
+    --lc-bg: #f6f7f9;
+    --lc-surface: #ffffff;
+    --lc-muted: #6b7280;
+    --lc-fg: #111827;
+    --lc-divider: #e5e7eb;
+    --lc-row-alt: #fafbfc;
+    --lc-row-hover: #f1f5f9;
+    --lc-chip-bg: #eef2ff;
+    --lc-chip-fg: #4338ca;
+    --lc-drag-bg: #fafbfc;
+    --lc-drag-border: #d4d7dd;
+    --lc-volatile-bg: #ffffff;
+    --lc-volatile-border: #e5e7eb;
+    --lc-err-head: #fef2f2;
+    --lc-logo-inner: #ffffff;
+    --lc-bar-track: #eef0f4;
+    --lc-ready-bg: #f5f7ff;
+    --lc-ready-border: #d8def7;
+    --lc-link: #4338ca;
+  }
+  .dark {
+    --lc-bg: #0b0d12;
+    --lc-surface: #11141b;
+    --lc-muted: #8a92a3;
+    --lc-fg: #e5e7eb;
+    --lc-divider: #1f2430;
+    --lc-row-alt: #131722;
+    --lc-row-hover: #1a2030;
+    --lc-chip-bg: #1e1b4b;
+    --lc-chip-fg: #c7d2fe;
+    --lc-drag-bg: #0f131c;
+    --lc-drag-border: #283041;
+    --lc-volatile-bg: #11141b;
+    --lc-volatile-border: #1f2430;
+    --lc-err-head: #2a1414;
+    --lc-logo-inner: #0b0d12;
+    --lc-bar-track: #1c2230;
+    --lc-ready-bg: #161a2b;
+    --lc-ready-border: #2a3052;
+    --lc-link: #c7d2fe;
+  }
+  body.light { background: var(--lc-bg); color: #111827; }
+  body.dark  { background: var(--lc-bg); color: #e5e7eb; }
+</style>
+</head>
+<body class="light">
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/dayjs@1.11.13/dayjs.min.js"></script>
+  <script src="https://unpkg.com/antd@5.20.6/dist/antd.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+// =========================================================================
+// Lumina Capital — financial transactions platform (prototype)
+// =========================================================================
+
+const { useState, useEffect, useMemo } = React;
+const {
+  ConfigProvider, theme: antdTheme,
+  Layout, Switch, Card, Upload, Button, Spin, Alert, Table, Tag, Select,
+  Space, Typography, Empty, Tooltip, Progress, Statistic, DatePicker, Input, InputNumber,
+} = antd;
+const { Header, Content } = Layout;
+const { Text } = Typography;
+const { Dragger } = Upload;
+
+// -------------------------------------------------------------------------
+// MOCK DATA — set any of these to [] / null to preview empty states.
+// -------------------------------------------------------------------------
+const CLIENT_IDS = ["CL-1042", "CL-1118", "CL-1207", "CL-1340", "CL-1483"];
+
+const UPLOAD_HISTORY = [
+  { key:"u1", filename:"trades_2026-05-08.xlsx", date:"2026-05-08 16:42", rows:4812, violations:3, status:"Active" },
+  { key:"u2", filename:"trades_2026-05-07.xlsx", date:"2026-05-07 16:38", rows:4604, violations:1, status:"Inactive" },
+  { key:"u3", filename:"trades_2026-05-06.xlsx", date:"2026-05-06 16:31", rows:4511, violations:7, status:"Inactive" },
+  { key:"u4", filename:"trades_2026-05-05.xlsx", date:"2026-05-05 16:29", rows:4388, violations:0, status:"Inactive" },
+  { key:"u5", filename:"trades_2026-05-04.xlsx", date:"2026-05-04 16:44", rows:4201, violations:2, status:"Inactive" },
+];
+
+const POSITIONS = {
+  "CL-1042": [
+    { isin:"US0378331005", qty:1200, avg:168.42, real:4210.55,  unreal:12430.18, last:178.78 },
+    { isin:"US5949181045", qty:800,  avg:312.10, real:-1204.40, unreal:8644.00,  last:322.91 },
+    { isin:"US88160R1014", qty:250,  avg:198.20, real:0,        unreal:-3122.50, last:185.71 },
+    { isin:"DE0007164600", qty:600,  avg:142.80, real:1840.10,  unreal:2290.00,  last:146.62 },
+    { isin:"GB0009895292", qty:1500, avg:38.10,  real:220.00,   unreal:-1050.00, last:37.40 },
+  ],
+  "CL-1118": [
+    { isin:"US0231351067", qty:320, avg:174.50,  real:1120.00,  unreal:5620.40,  last:192.06 },
+    { isin:"US30303M1027", qty:540, avg:488.20,  real:-3402.00, unreal:10820.00, last:508.24 },
+    { isin:"US67066G1040", qty:90,  avg:1104.00, real:0,        unreal:18204.00, last:1306.27 },
+  ],
+  "CL-1207": [
+    { isin:"US0378331005", qty:200,  avg:175.10, real:0,      unreal:736.00,  last:178.78 },
+    { isin:"FR0000131104", qty:410,  avg:56.20,  real:-88.20, unreal:-902.00, last:54.00 },
+    { isin:"JP3633400001", qty:1000, avg:28.40,  real:280.00, unreal:410.00,  last:28.81 },
+    { isin:"US5949181045", qty:120,  avg:320.55, real:0,      unreal:283.20,  last:322.91 },
+  ],
+  "CL-1340": [
+    { isin:"US88160R1014", qty:60,   avg:220.40, real:-1040.00, unreal:-2081.40, last:185.71 },
+    { isin:"GB0009895292", qty:4200, avg:36.10,  real:1204.00,  unreal:5460.00,  last:37.40 },
+    { isin:"DE0007164600", qty:110,  avg:150.20, real:0,        unreal:-393.80,  last:146.62 },
+  ],
+  "CL-1483": [
+    { isin:"US30303M1027", qty:75,   avg:502.00,  real:0,       unreal:468.00,  last:508.24 },
+    { isin:"US0231351067", qty:90,   avg:188.20,  real:0,       unreal:347.40,  last:192.06 },
+    { isin:"US67066G1040", qty:12,   avg:1280.10, real:0,       unreal:314.04,  last:1306.27 },
+    { isin:"JP3633400001", qty:2400, avg:29.20,   real:-240.00, unreal:-936.00, last:28.81 },
+  ],
+};
+
+const VIOLATIONS = [
+  { key:"v1", client:"CL-1042", isin:"US88160R1014", type:"ERROR",   description:"Quantity sold exceeds held position by 30." },
+  { key:"v2", client:"CL-1042", isin:"US5949181045", type:"FLAG",    description:"Trade executed 14m before market open." },
+  { key:"v3", client:"CL-1118", isin:"US30303M1027", type:"WARNING", description:"Average cost basis differs from prior day by 4.2%." },
+  { key:"v4", client:"CL-1207", isin:"FR0000131104", type:"FLAG",    description:"Three reversals on same instrument within 5 minutes." },
+  { key:"v5", client:"CL-1340", isin:"GB0009895292", type:"WARNING", description:"Position drift outside expected band (+18%)." },
+  { key:"v6", client:"CL-1340", isin:"US88160R1014", type:"ERROR",   description:"Missing settlement currency for cross-border trade." },
+  { key:"v7", client:"CL-1483", isin:"JP3633400001", type:"FLAG",    description:"Unusual quantity vs 30-day median (4.1×)." },
+  { key:"v8", client:"CL-1483", isin:"US67066G1040", type:"WARNING", description:"Realized P&L sign inconsistent with FIFO lot match." },
+];
+
+const REJECTED_ROWS = [
+  { key:"r1", row:142,  field:"ISIN",     value:"USXX",             error:"Invalid ISIN — checksum failed." },
+  { key:"r2", row:318,  field:"Quantity", value:"-12.5",            error:"Quantity must be a positive integer." },
+  { key:"r3", row:904,  field:"TradeTs",  value:"2026-05-08 25:14", error:"Invalid timestamp." },
+  { key:"r4", row:1287, field:"Currency", value:"",                 error:"Currency is required for cross-border trades." },
+  { key:"r5", row:2044, field:"Side",     value:"BYE",              error:"Side must be BUY or SELL." },
+];
+
+const ANALYTICS = {
+  topISINs: [
+    { isin:"US0378331005", count:1842 },
+    { isin:"US5949181045", count:1204 },
+    { isin:"US88160R1014", count: 918 },
+  ],
+  avgHolding: [
+    { key:"h1", client:"CL-1042", days:42.6 },
+    { key:"h2", client:"CL-1118", days:18.1 },
+    { key:"h3", client:"CL-1207", days:91.4 },
+    { key:"h4", client:"CL-1340", days:12.8 },
+    { key:"h5", client:"CL-1483", days:60.3 },
+  ],
+  volatile: {
+    client: "CL-1340",
+    rangeLow: -41220, rangeHigh: 38140, sigma: 24104,
+    series: [-12000, -28000, -41220, -22000, -8000, 4000, 18000, 28000, 38140, 22000, 9000, -3000, -15000, 6000],
+  },
+  concentration: [
+    { key:"c1", isin:"US0378331005", pct:78, clients:["CL-1042","CL-1118","CL-1207","CL-1483"] },
+    { key:"c2", isin:"US5949181045", pct:62, clients:["CL-1042","CL-1207","CL-1483"] },
+    { key:"c3", isin:"US88160R1014", pct:51, clients:["CL-1042","CL-1340"] },
+    { key:"c4", isin:"GB0009895292", pct:44, clients:["CL-1042","CL-1340"] },
+    { key:"c5", isin:"DE0007164600", pct:33, clients:["CL-1042","CL-1340"] },
+  ],
+};
+
+// -------------------------------------------------------------------------
+// FORMATTERS
+// -------------------------------------------------------------------------
+const fmtMoney = (n) => {
+  const s = Math.abs(n).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  return (n < 0 ? "−$" : "$") + s;
+};
+const fmtNum = (n) => n.toLocaleString("en-US");
+const fmtPrice = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
+
+const PnLCell = (v) => {
+  if (v === 0) return <span className="num muted">$0.00</span>;
+  return <span className={"num " + (v > 0 ? "num-pos" : "num-neg")}>{fmtMoney(v)}</span>;
+};
+
+// -------------------------------------------------------------------------
+// CSV EXPORT
+// -------------------------------------------------------------------------
+function csvEscape(v) {
+  if (v == null) return "";
+  const s = String(v);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function exportCSV(filename, rows, columns) {
+  if (!rows || rows.length === 0) {
+    antd.message.info("Nothing to export");
+    return;
+  }
+  const header = columns.map(c => csvEscape(c.title)).join(",");
+  const body = rows.map(r =>
+    columns.map(c => {
+      const raw = c.get ? c.get(r) : r[c.key];
+      return csvEscape(raw);
+    }).join(",")
+  ).join("\n");
+  const csv = header + "\n" + body;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ExportButton({ disabled, onClick, label = "Export CSV" }) {
+  return (
+    <Button
+      size="small"
+      onClick={onClick}
+      disabled={disabled}
+      icon={<span style={{ marginRight: 2 }}>↓</span>}
+    >
+      {label}
+    </Button>
+  );
+}
+
+// -------------------------------------------------------------------------
+// CHARTS — lightweight SVG bar charts
+// -------------------------------------------------------------------------
+function HBarChart({ data, getLabel, getValue, formatValue, emptyText = "No data" }) {
+  if (!data || data.length === 0) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} />;
+  }
+  const max = Math.max(...data.map(getValue), 1);
+  return (
+    <div>
+      {data.map((d, i) => {
+        const v = getValue(d);
+        const pct = (v / max) * 100;
+        return (
+          <div key={i} className="lc-bar-row">
+            <span className="lc-bar-label">{getLabel(d, i)}</span>
+            <div className="lc-bar-track">
+              <div className="lc-bar-fill" style={{ width: pct + "%" }} />
+            </div>
+            <span className="lc-bar-value">{formatValue(v, d)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Sparkline({ values, height = 56, dark }) {
+  if (!values || values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const w = 100;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = height - ((v - min) / range) * (height - 6) - 3;
+    return [x, y];
+  });
+  const d = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(2) + "," + p[1].toFixed(2)).join(" ");
+  const area = d + ` L ${w},${height} L 0,${height} Z`;
+  const stroke = dark ? "#a78bfa" : "#6366f1";
+  const fill = dark ? "rgba(167,139,250,0.18)" : "rgba(99,102,241,0.16)";
+  return (
+    <svg className="lc-spark" viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none">
+      <path d={area} fill={fill} />
+      <path d={d} fill="none" stroke={stroke} strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+// -------------------------------------------------------------------------
+// UPLOAD PANEL
+// -------------------------------------------------------------------------
+function UploadPanel({ onProcessed }) {
+  const [phase, setPhase] = useState("idle");
+  const [fileName, setFileName] = useState("");
+  const [summary, setSummary] = useState(null);
+
+  function startProcess() {
+    if (!fileName) return;
+    setPhase("loading");
+    setTimeout(() => {
+      if (/-bad\.xlsx$/i.test(fileName)) {
+        setPhase("error"); setSummary(null);
+      } else {
+        const rows = 4500 + Math.floor(Math.random() * 600);
+        const violations = Math.floor(Math.random() * 5);
+        const result = { filename:fileName, rows, violations, parsed: rows-4, rejected: 4, clients: 12 };
+        setSummary(result); setPhase("success");
+        onProcessed?.(result);
+      }
+    }, 1400);
+  }
+  function reset() { setPhase("idle"); setFileName(""); setSummary(null); }
+
+  const draggerProps = {
+    name: "file", multiple: false, accept: ".xlsx", showUploadList: false,
+    beforeUpload(file) { setFileName(file.name); setPhase("idle"); setSummary(null); return false; },
+  };
+
+  return (
+    <Card
+      title={<Space size={10}><span>Upload trade ledger</span><Tag color="blue" style={{ marginLeft: 4 }}>.xlsx</Tag></Space>}
+      extra={phase !== "idle" ? <Button size="small" type="text" onClick={reset}>Reset</Button> : null}
+    >
+      <div className="lc-upload-grid">
+        <div>
+          <Dragger {...draggerProps} style={{ padding: "12px 0" }}>
+            <p className="ant-upload-drag-icon" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 36, lineHeight: 1 }}>↥</span>
+            </p>
+            <p className="ant-upload-text" style={{ fontWeight: 600, fontSize: 15 }}>
+              Drop an .xlsx file or click to browse
+            </p>
+            <p className="ant-upload-hint" style={{ fontSize: 13 }}>
+              Single file, up to 50&nbsp;MB. Headers must follow Lumina ledger schema v3.
+            </p>
+          </Dragger>
+
+          {fileName ? (
+            <div className="lc-ready-bar">
+              <span className="lc-ready-icon">XLSX</span>
+              <div className="lc-ready-meta">
+                <div className="lc-ready-name" title={fileName}>{fileName}</div>
+                <div className="lc-ready-sub">
+                  {phase === "loading" ? "Processing…" :
+                   phase === "success" ? "Processed successfully" :
+                   phase === "error"   ? "Validation failed — see errors below" :
+                   "Ready to process"}
+                </div>
+              </div>
+              {phase !== "loading" && phase !== "success" && (
+                <Button type="text" size="small" onClick={reset} aria-label="Clear file">✕</Button>
+              )}
+              <Button
+                type="primary" size="large"
+                disabled={phase === "loading" || phase === "success"}
+                loading={phase === "loading"}
+                onClick={startProcess}
+              >
+                {phase === "success" ? "Processed" : "Upload & Process →"}
+              </Button>
+            </div>
+          ) : (
+            <div className="lc-demo-link">
+              No file?{" "}
+              <Tooltip title="Stages a fake filename ending with -bad.xlsx so you can see the rejection flow.">
+                <a onClick={() => setFileName("trades_2026-05-09-bad.xlsx")}>Try a demo rejected file</a>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <StatusArea phase={phase} summary={summary} />
+        </div>
+      </div>
+
+      {phase === "error" && (
+        <div style={{ marginTop: 20 }}>
+          <Alert
+            type="error" showIcon
+            message={`File rejected — ${REJECTED_ROWS.length} row(s) failed validation`}
+            description="Fix the rows below and re-upload. No data was ingested."
+            style={{ marginBottom: 12 }}
+          />
+          <Table
+            className="lc-table lc-err-table"
+            size="middle"
+            pagination={{ pageSize: 10, size: "small", hideOnSinglePage: true, showSizeChanger: true, pageSizeOptions: ["5","10","20"] }}
+            dataSource={REJECTED_ROWS}
+            columns={[
+              { title:"Row", dataIndex:"row", width:80, className:"num" },
+              { title:"Field", dataIndex:"field", width:130 },
+              { title:"Value", dataIndex:"value", width:200,
+                render: (v) => <span className="mono">{v === "" ? <span className="muted">(empty)</span> : v}</span> },
+              { title:"Error", dataIndex:"error" },
+            ]}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No row errors" /> }}
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function StatusArea({ phase, summary }) {
+  const baseStyle = {
+    height: "100%", minHeight: 220,
+    border: "1px dashed var(--lc-divider)", borderRadius: 12,
+    display: "flex", alignItems: "center", justifyContent: "center", padding: 18,
+  };
+  if (phase === "idle") {
+    return (
+      <div style={baseStyle}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>◷</div>
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            Awaiting file. Status, summary, and any row errors will appear here.
+          </Text>
+        </div>
+      </div>
+    );
+  }
+  if (phase === "loading") {
+    return (
+      <div style={{ ...baseStyle, borderStyle: "solid", flexDirection: "column", gap: 14 }}>
+        <Spin size="large" />
+        <Text type="secondary" style={{ fontSize: 13 }}>Parsing rows, validating ISINs, computing P&amp;L…</Text>
+      </div>
+    );
+  }
+  if (phase === "success" && summary) {
+    return (
+      <div style={{ border: "1px solid var(--lc-divider)", borderRadius: 12, padding: 18, height: "100%" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom: 14, flexWrap:"wrap" }}>
+          <Tag color="success" style={{ marginRight: 0 }}>Processed</Tag>
+          <Text strong className="mono" style={{ fontSize: 12 }}>{summary.filename}</Text>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap: 14 }}>
+          <Statistic title="Rows parsed" value={summary.parsed} />
+          <Statistic title="Rejected"    value={summary.rejected} valueStyle={{ color:"#dc2626" }} />
+          <Statistic title="Violations"  value={summary.violations}
+            valueStyle={{ color: summary.violations ? "#d97706" : undefined }} />
+          <Statistic title="Clients"     value={summary.clients} />
+        </div>
+      </div>
+    );
+  }
+  if (phase === "error") {
+    return (
+      <div style={{ ...baseStyle, borderStyle: "solid", textAlign: "center" }}>
+        <div>
+          <div style={{ fontSize: 32, color:"#dc2626", lineHeight: 1, marginBottom: 8 }}>⚠</div>
+          <Text strong>Validation failed</Text>
+          <div><Text type="secondary" style={{ fontSize: 12 }}>See row-level errors below.</Text></div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// -------------------------------------------------------------------------
+// UPLOAD HISTORY
+// -------------------------------------------------------------------------
+function UploadHistorySection({ rows, activeKey, onLoad }) {
+  const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState(null);
+  const [statusF, setStatusF] = useState("ALL");
+  const [violF, setViolF] = useState("ALL");
+
+  const filtered = useMemo(() => (rows || []).filter((r) => {
+    if (search && !r.filename.toLowerCase().includes(search.toLowerCase())) return false;
+    if (statusF !== "ALL" && r.status !== statusF) return false;
+    if (violF === "WITH" && r.violations === 0) return false;
+    if (violF === "NONE" && r.violations > 0) return false;
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      const d = dayjs(r.date);
+      if (d.isBefore(dateRange[0].startOf("day")) || d.isAfter(dateRange[1].endOf("day"))) return false;
+    }
+    return true;
+  }), [rows, search, statusF, violF, dateRange]);
+
+  const columns = [
+    { title:"Filename", dataIndex:"filename",
+      sorter: (a,b) => a.filename.localeCompare(b.filename),
+      render: (v) => <span className="mono">{v}</span> },
+    { title:"Date", dataIndex:"date", width:170,
+      sorter: (a,b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf(),
+      defaultSortOrder: "descend" },
+    { title:"Rows", dataIndex:"rows", width:110, className:"num",
+      sorter: (a,b) => a.rows - b.rows,
+      render: (v) => fmtNum(v) },
+    { title:"Violations", dataIndex:"violations", width:130, className:"num",
+      sorter: (a,b) => a.violations - b.violations,
+      render: (v) => v === 0
+        ? <span className="muted">0</span>
+        : <Tag color={v > 3 ? "red" : "orange"} style={{ marginRight: 0 }}>{v}</Tag> },
+    { title:"Status", dataIndex:"status", width:120,
+      sorter: (a,b) => a.status.localeCompare(b.status),
+      render: (s) => s === "Active" ? <Tag color="success">Active</Tag> : <Tag>Inactive</Tag> },
+    { title:"", key:"load", width:100, align:"right",
+      render: (_, r) => (
+        <Button size="small"
+          type={r.key === activeKey ? "default" : "primary"}
+          ghost={r.key !== activeKey}
+          onClick={() => onLoad(r.key)}
+          disabled={r.key === activeKey}
+        >{r.key === activeKey ? "Loaded" : "Load"}</Button>
+      ) },
+  ];
+
+  function handleExport() {
+    exportCSV("upload-history.csv", filtered, [
+      { title:"Filename",   key:"filename" },
+      { title:"Date",       key:"date" },
+      { title:"Rows",       key:"rows" },
+      { title:"Violations", key:"violations" },
+      { title:"Status",     key:"status" },
+    ]);
+  }
+
+  function resetFilters() {
+    setSearch(""); setDateRange(null); setStatusF("ALL"); setViolF("ALL");
+  }
+  const isFiltered = search || dateRange || statusF !== "ALL" || violF !== "ALL";
+
+  return (
+    <Card
+      size="small"
+      title="Upload history"
+      extra={<ExportButton disabled={!filtered || filtered.length === 0} onClick={handleExport} />}
+    >
+      <div style={{ display:"flex", flexWrap:"wrap", gap: 10, alignItems:"center", marginBottom: 14 }}>
+        <Input.Search placeholder="Filename…" allowClear value={search}
+          onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
+        <DatePicker.RangePicker value={dateRange} onChange={setDateRange}
+          allowEmpty={[true, true]} style={{ minWidth: 240 }} />
+        <Select value={statusF} onChange={setStatusF} style={{ width: 140 }}
+          options={[{value:"ALL",label:"All statuses"},{value:"Active",label:"Active"},{value:"Inactive",label:"Inactive"}]} />
+        <Select value={violF} onChange={setViolF} style={{ width: 170 }}
+          options={[{value:"ALL",label:"All"},{value:"WITH",label:"With violations"},{value:"NONE",label:"No violations"}]} />
+        {isFiltered && <Button size="small" type="text" onClick={resetFilters}>Clear</Button>}
+        <span className="muted" style={{ marginLeft:"auto", fontSize: 12 }}>{filtered.length} of {rows.length}</span>
+      </div>
+      <Table
+        className="lc-table"
+        rowKey="key" size="middle"
+        pagination={{ pageSize: 10, size: "small", showSizeChanger: true, pageSizeOptions: ["5","10","20","50"], hideOnSinglePage: true, showTotal: (t, r) => `${r[0]}–${r[1]} of ${t}` }}
+        dataSource={filtered}
+        columns={columns}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={rows.length === 0 ? "No uploads yet" : "No uploads match the filters"} /> }}
+        scroll={{ x: 760 }}
+      />
+    </Card>
+  );
+}
+
+// -------------------------------------------------------------------------
+// POSITIONS
+// -------------------------------------------------------------------------
+function PositionsSection() {
+  const [client, setClient] = useState(CLIENT_IDS[0] || null);
+  const [search, setSearch] = useState("");
+  const [pnlF, setPnlF] = useState("ALL");
+  const [minQty, setMinQty] = useState(null);
+
+  const data = useMemo(() => {
+    const rows = client ? (POSITIONS[client] || []) : [];
+    return rows.map((p, i) => ({ ...p, key: client + "-" + i }));
+  }, [client]);
+
+  const filtered = useMemo(() => data.filter((r) => {
+    if (search && !r.isin.toLowerCase().includes(search.toLowerCase())) return false;
+    if (pnlF === "GAIN" && r.unreal <= 0) return false;
+    if (pnlF === "LOSS" && r.unreal >= 0) return false;
+    if (pnlF === "FLAT" && r.unreal !== 0) return false;
+    if (minQty != null && r.qty < minQty) return false;
+    return true;
+  }), [data, search, pnlF, minQty]);
+
+  const totals = useMemo(() => filtered.reduce(
+    (a, r) => ({ real: a.real + r.real, unreal: a.unreal + r.unreal }),
+    { real: 0, unreal: 0 }
+  ), [filtered]);
+
+  const columns = [
+    { title:"ISIN", dataIndex:"isin",
+      sorter: (a,b) => a.isin.localeCompare(b.isin),
+      render: (v) => <span className="mono">{v}</span> },
+    { title:"Quantity", dataIndex:"qty", className:"num", width:120,
+      sorter: (a,b) => a.qty - b.qty,
+      render: (v) => fmtNum(v) },
+    { title:"Avg Cost", dataIndex:"avg", className:"num", width:130,
+      sorter: (a,b) => a.avg - b.avg,
+      render: (v) => fmtPrice(v) },
+    { title:"Realized P&L", dataIndex:"real", className:"num", width:150,
+      sorter: (a,b) => a.real - b.real,
+      render: PnLCell },
+    { title:"Unrealized P&L", dataIndex:"unreal", className:"num", width:160,
+      sorter: (a,b) => a.unreal - b.unreal,
+      defaultSortOrder: "descend",
+      render: PnLCell },
+    { title:"Last Price", dataIndex:"last", className:"num", width:130,
+      sorter: (a,b) => a.last - b.last,
+      render: (v) => fmtPrice(v) },
+  ];
+
+  function handleExport() {
+    exportCSV(`positions-${client || "none"}.csv`, filtered, [
+      { title:"ISIN",           key:"isin" },
+      { title:"Quantity",       key:"qty" },
+      { title:"Avg Cost",       key:"avg" },
+      { title:"Realized P&L",   key:"real" },
+      { title:"Unrealized P&L", key:"unreal" },
+      { title:"Last Price",     key:"last" },
+    ]);
+  }
+
+  const hasClients = CLIENT_IDS.length > 0;
+
+  return (
+    <Card
+      title={null}
+      extra={<ExportButton disabled={filtered.length === 0} onClick={handleExport} />}
+    >
+      <div className="lc-positions-toolbar">
+        <Text type="secondary" style={{ fontSize: 13 }}>Client</Text>
+        <Select
+          value={client} onChange={setClient}
+          style={{ width: 180 }} disabled={!hasClients} placeholder="No clients"
+          options={CLIENT_IDS.map((id) => ({ value: id, label: id }))}
+        />
+        <Input.Search placeholder="ISIN…" allowClear value={search}
+          onChange={(e) => setSearch(e.target.value)} style={{ width: 170 }} />
+        <Select value={pnlF} onChange={setPnlF} style={{ width: 150 }}
+          options={[
+            {value:"ALL",label:"All P&L"},
+            {value:"GAIN",label:"Gainers"},
+            {value:"LOSS",label:"Losers"},
+            {value:"FLAT",label:"Flat"},
+          ]} />
+        <InputNumber placeholder="Min qty" value={minQty} onChange={setMinQty}
+          min={0} style={{ width: 120 }} />
+        <div className="lc-positions-totals">
+          <Statistic title="Realized" value={fmtMoney(totals.real)}
+            valueStyle={{ fontSize: 15, color: filtered.length === 0 ? undefined : (totals.real >= 0 ? "#16a34a" : "#dc2626") }} />
+          <Statistic title="Unrealized" value={fmtMoney(totals.unreal)}
+            valueStyle={{ fontSize: 15, color: filtered.length === 0 ? undefined : (totals.unreal >= 0 ? "#16a34a" : "#dc2626") }} />
+          <Statistic title="Positions" value={filtered.length} valueStyle={{ fontSize: 15 }} />
+        </div>
+      </div>
+      <Table
+        className="lc-table"
+        rowKey="key" size="middle"
+        pagination={{ pageSize: 10, size: "small", showSizeChanger: true, pageSizeOptions: ["5","10","20","50"], hideOnSinglePage: true, showTotal: (t, r) => `${r[0]}–${r[1]} of ${t}` }}
+        dataSource={filtered}
+        columns={columns}
+        scroll={{ x: 880 }}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={!hasClients ? "No clients available" : (data.length === 0 ? "No positions for this client" : "No positions match the filters")} /> }}
+      />
+    </Card>
+  );
+}
+
+// -------------------------------------------------------------------------
+// VIOLATIONS
+// -------------------------------------------------------------------------
+const VIOL_COLORS = { ERROR:"red", FLAG:"orange", WARNING:"gold" };
+
+const TYPE_ORDER = { ERROR: 0, FLAG: 1, WARNING: 2 };
+
+function ViolationsSection() {
+  const [clientF, setClientF] = useState("ALL");
+  const [typeF, setTypeF] = useState("ALL");
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => VIOLATIONS.filter((v) => {
+    if (clientF !== "ALL" && v.client !== clientF) return false;
+    if (typeF !== "ALL" && v.type !== typeF) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      if (!v.isin.toLowerCase().includes(s) && !v.description.toLowerCase().includes(s)) return false;
+    }
+    return true;
+  }), [clientF, typeF, search]);
+
+  const counts = VIOLATIONS.reduce((a, v) => { a[v.type] = (a[v.type]||0)+1; return a; }, {});
+
+  const columns = [
+    { title:"Client", dataIndex:"client", width:130,
+      sorter: (a,b) => a.client.localeCompare(b.client),
+      render: (v) => <span className="mono">{v}</span> },
+    { title:"ISIN", dataIndex:"isin", width:160,
+      sorter: (a,b) => a.isin.localeCompare(b.isin),
+      render: (v) => <span className="mono">{v}</span> },
+    { title:"Type", dataIndex:"type", width:120,
+      sorter: (a,b) => (TYPE_ORDER[a.type] ?? 99) - (TYPE_ORDER[b.type] ?? 99),
+      defaultSortOrder: "ascend",
+      render: (t) => <Tag color={VIOL_COLORS[t]} style={{ fontWeight: 600, marginRight: 0 }}>{t}</Tag> },
+    { title:"Description", dataIndex:"description",
+      sorter: (a,b) => a.description.localeCompare(b.description) },
+  ];
+
+  function handleExport() {
+    exportCSV("violations.csv", filtered, [
+      { title:"Client",      key:"client" },
+      { title:"ISIN",        key:"isin" },
+      { title:"Type",        key:"type" },
+      { title:"Description", key:"description" },
+    ]);
+  }
+
+  return (
+    <Card extra={<ExportButton disabled={filtered.length === 0} onClick={handleExport} />}>
+      <div className="lc-violations-toolbar">
+        <Select
+          value={clientF} onChange={setClientF} style={{ width: 160 }}
+          options={[{ value:"ALL", label:"All clients" }, ...CLIENT_IDS.map((id) => ({ value: id, label: id }))]}
+        />
+        <Select
+          value={typeF} onChange={setTypeF} style={{ width: 150 }}
+          options={[
+            { value:"ALL",     label:"All types" },
+            { value:"ERROR",   label:"Error" },
+            { value:"FLAG",    label:"Flag" },
+            { value:"WARNING", label:"Warning" },
+          ]}
+        />
+        <Input.Search placeholder="ISIN or description…" allowClear value={search}
+          onChange={(e) => setSearch(e.target.value)} style={{ width: 240 }} />
+        <div className="lc-violations-counts">
+          <Tag color="red">{counts.ERROR || 0} errors</Tag>
+          <Tag color="orange">{counts.FLAG || 0} flags</Tag>
+          <Tag color="gold">{counts.WARNING || 0} warnings</Tag>
+        </div>
+      </div>
+      <Table
+        className="lc-table"
+        rowKey="key" size="middle"
+        pagination={{ pageSize: 10, size: "small", showSizeChanger: true, pageSizeOptions: ["5","10","20","50"], hideOnSinglePage: true, showTotal: (t, r) => `${r[0]}–${r[1]} of ${t}` }}
+        dataSource={filtered}
+        columns={columns}
+        scroll={{ x: 720 }}
+        locale={{ emptyText:
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={VIOLATIONS.length === 0 ? "No violations recorded" : "No violations match the filters"} />
+        }}
+      />
+    </Card>
+  );
+}
+
+// -------------------------------------------------------------------------
+// ANALYTICS
+// -------------------------------------------------------------------------
+function AnalyticsSection({ dark }) {
+  function exportTopISINs() {
+    exportCSV("top-isins.csv", ANALYTICS.topISINs, [
+      { title:"Rank", key:"_rank", get: (_, i) => i + 1 },
+      { title:"ISIN",  key:"isin" },
+      { title:"Count", key:"count" },
+    ].map((c, i) => ({ ...c, get: c.get || ((r) => r[c.key]) })));
+  }
+  function exportHolding() {
+    exportCSV("avg-holding.csv", ANALYTICS.avgHolding, [
+      { title:"Client",   key:"client" },
+      { title:"Avg days", key:"days" },
+    ]);
+  }
+  function exportConcentration() {
+    exportCSV("isin-concentration.csv", ANALYTICS.concentration, [
+      { title:"ISIN", key:"isin" },
+      { title:"% of clients", key:"pct" },
+      { title:"Clients", key:"clients", get: (r) => (r.clients || []).join(" | ") },
+    ]);
+  }
+
+  const topData = (ANALYTICS.topISINs || []).map((r, i) => ({ ...r, _rank: i + 1 }));
+
+  return (
+    <div className="lc-grid-2">
+      {/* Top ISINs as bar chart */}
+      <Card
+        title="Top 3 Traded ISINs"
+        size="small"
+        extra={<ExportButton disabled={topData.length === 0} onClick={exportTopISINs} />}
+      >
+        <HBarChart
+          data={topData}
+          getLabel={(d) => `#${d._rank}  ${d.isin}`}
+          getValue={(d) => d.count}
+          formatValue={(v) => fmtNum(v) + " txns"}
+        />
+      </Card>
+
+      {/* Avg holding time as bar chart */}
+      <Card
+        title="Avg Holding Time"
+        size="small"
+        extra={<ExportButton disabled={(ANALYTICS.avgHolding || []).length === 0} onClick={exportHolding} />}
+      >
+        <HBarChart
+          data={ANALYTICS.avgHolding || []}
+          getLabel={(d) => d.client}
+          getValue={(d) => d.days}
+          formatValue={(v) => v.toFixed(1) + " d"}
+        />
+      </Card>
+
+      {/* Most volatile client */}
+      <Card title="Most Volatile Client" size="small">
+        {ANALYTICS.volatile ? (
+          <div className="lc-volatile">
+            <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom: 12, flexWrap:"wrap", gap: 8 }}>
+              <span className="mono" style={{ fontSize: 22, fontWeight: 600 }}>{ANALYTICS.volatile.client}</span>
+              <span className="lc-pill">σ {fmtMoney(ANALYTICS.volatile.sigma)}</span>
+            </div>
+            <div style={{ display:"flex", gap: 24, flexWrap:"wrap" }}>
+              <div>
+                <div className="muted" style={{ fontSize: 11, textTransform:"uppercase", letterSpacing:"0.06em" }}>Range low</div>
+                <div className="num num-neg" style={{ fontSize: 18, fontWeight: 600, textAlign: "left" }}>
+                  {fmtMoney(ANALYTICS.volatile.rangeLow)}
+                </div>
+              </div>
+              <div>
+                <div className="muted" style={{ fontSize: 11, textTransform:"uppercase", letterSpacing:"0.06em" }}>Range high</div>
+                <div className="num num-pos" style={{ fontSize: 18, fontWeight: 600, textAlign: "left" }}>
+                  {fmtMoney(ANALYTICS.volatile.rangeHigh)}
+                </div>
+              </div>
+            </div>
+            <Sparkline values={ANALYTICS.volatile.series} dark={dark} />
+          </div>
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No data" />
+        )}
+      </Card>
+
+      {/* ISIN concentration */}
+      <ConcentrationCard onExport={exportConcentration} />
+    </div>
+  );
+}
+
+function ConcentrationCard({ onExport }) {
+  const [minPct, setMinPct] = useState(0);
+  const rows = useMemo(
+    () => (ANALYTICS.concentration || []).filter((r) => r.pct >= minPct),
+    [minPct]
+  );
+  return (
+    <Card
+      title="ISIN Concentration"
+      size="small"
+      extra={
+        <Space size={8}>
+          <Text type="secondary" style={{ fontSize: 12 }}>Min %</Text>
+          <InputNumber size="small" min={0} max={100} value={minPct}
+            onChange={(v) => setMinPct(v ?? 0)} style={{ width: 70 }} />
+          <ExportButton disabled={rows.length === 0} onClick={onExport} />
+        </Space>
+      }
+      styles={{ body: { padding: 0 } }}
+    >
+      <Table
+        className="lc-table"
+        rowKey="key" size="small"
+        pagination={{ pageSize: 5, size: "small", hideOnSinglePage: true }}
+        dataSource={rows}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No data" /> }}
+        scroll={{ x: 480 }}
+        columns={[
+          { title:"ISIN", dataIndex:"isin", width:150,
+            sorter: (a,b) => a.isin.localeCompare(b.isin),
+            render: (v) => <span className="mono">{v}</span> },
+          { title:"% of clients", dataIndex:"pct", width:170,
+            sorter: (a,b) => a.pct - b.pct,
+            defaultSortOrder: "descend",
+            render: (v) => (
+              <div style={{ display:"flex", alignItems:"center", gap: 10 }}>
+                <Progress percent={v} showInfo={false} size={["64px", 6]} strokeColor="#6366f1" />
+                <span className="num" style={{ width: 38 }}>{v}%</span>
+              </div>
+            ) },
+          { title:"Clients", dataIndex:"clients",
+            sorter: (a,b) => (a.clients?.length || 0) - (b.clients?.length || 0),
+            render: (cs) => (
+              <Space size={[4, 4]} wrap>
+                {(cs || []).map((c) => <Tag key={c} className="mono" style={{ marginRight: 0 }}>{c}</Tag>)}
+              </Space>
+            ) },
+        ]}
+      />
+    </Card>
+  );
+}
+
+// -------------------------------------------------------------------------
+// APP
+// -------------------------------------------------------------------------
+function App() {
+  const [dark, setDark] = useState(false);
+  const [history, setHistory] = useState(UPLOAD_HISTORY);
+  const [activeKey, setActiveKey] = useState(UPLOAD_HISTORY[0]?.key ?? null);
+
+  useEffect(() => {
+    document.body.classList.toggle("dark", dark);
+    document.body.classList.toggle("light", !dark);
+  }, [dark]);
+
+  const themeConfig = useMemo(() => ({
+    algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    token: {
+      colorPrimary: "#6366f1",
+      borderRadius: 8,
+      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      fontSize: 14,
+      colorBgLayout: dark ? "#0b0d12" : "#f6f7f9",
+      colorBgContainer: dark ? "#11141b" : "#ffffff",
+      colorBorderSecondary: dark ? "#1f2430" : "#eef0f4",
+    },
+    components: {
+      Layout: {
+        headerBg: dark ? "rgba(11,13,18,0.85)" : "rgba(255,255,255,0.85)",
+        headerHeight: 64,
+        headerPadding: "0 24px",
+      },
+      Card: {
+        headerFontSize: 15,
+        headerHeight: 52,
+        paddingLG: 24,
+      },
+      Table: {
+        headerBg: dark ? "#161a23" : "#f3f4f6",
+        headerColor: dark ? "#cbd5e1" : "#374151",
+        rowHoverBg: dark ? "#1a2030" : "#f1f5f9",
+        cellFontSize: 15,
+        cellPaddingBlock: 14,
+      },
+      Statistic: { titleFontSize: 12 },
+    },
+  }), [dark]);
+
+  function handleProcessed(result) {
+    const newRow = {
+      key: "u-" + Date.now(),
+      filename: result.filename,
+      date: dayjs().format("YYYY-MM-DD HH:mm"),
+      rows: result.rows,
+      violations: result.violations,
+      status: "Active",
+    };
+    setHistory([newRow, ...history.map((r) => ({ ...r, status: "Inactive" }))]);
+    setActiveKey(newRow.key);
+  }
+  function handleLoad(key) {
+    setActiveKey(key);
+    setHistory(history.map((r) => ({ ...r, status: r.key === key ? "Active" : "Inactive" })));
+  }
+
+  return (
+    <ConfigProvider theme={themeConfig}>
+      <Layout style={{ minHeight: "100vh", background: "var(--lc-bg)" }}>
+        <Header className="lc-header"
+          style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div className="lc-logo">
+            <span className="lc-logo-mark"></span>
+            <span>Lumina Capital</span>
+            <Text type="secondary" style={{ fontSize: 13, marginLeft: 6, fontWeight: 400 }}>
+              Transactions
+            </Text>
+          </div>
+          <Space size={10} align="center">
+            <Text type="secondary" style={{ fontSize: 13 }}>{dark ? "Dark" : "Light"}</Text>
+            <Switch checked={dark} onChange={setDark} checkedChildren="☾" unCheckedChildren="☀" />
+          </Space>
+        </Header>
+
+        <Content style={{
+          padding: "28px 28px 40px",
+          maxWidth: 1400, width: "100%", margin: "0 auto",
+        }}>
+          {/* 1. Upload */}
+          <section className="lc-section">
+            <UploadPanel onProcessed={handleProcessed} />
+          </section>
+
+          {/* 2. Upload history */}
+          <section className="lc-section">
+            <UploadHistorySection rows={history} activeKey={activeKey} onLoad={handleLoad} />
+          </section>
+
+          {/* 3. Positions */}
+          <section className="lc-section">
+            <div className="lc-section-title">
+              <h2>Positions</h2>
+              <Text type="secondary" style={{ fontSize: 12 }}>Snapshot · end-of-day</Text>
+            </div>
+            <PositionsSection />
+          </section>
+
+          {/* 4. Violations */}
+          <section className="lc-section">
+            <div className="lc-section-title">
+              <h2>Violations</h2>
+              <Text type="secondary" style={{ fontSize: 12 }}>Validated against ledger schema v3</Text>
+            </div>
+            <ViolationsSection />
+          </section>
+
+          {/* 5. Analytics */}
+          <section className="lc-section">
+            <div className="lc-section-title">
+              <h2>Analytics</h2>
+              <Text type="secondary" style={{ fontSize: 12 }}>Across loaded ledger</Text>
+            </div>
+            <AnalyticsSection dark={dark} />
+          </section>
+
+          <div style={{ textAlign:"center", padding: "12px 0 4px" }}>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              Lumina Capital · prototype · all data illustrative
+            </Text>
+          </div>
+        </Content>
+      </Layout>
+    </ConfigProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

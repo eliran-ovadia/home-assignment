@@ -1,0 +1,710 @@
+# Technical Specification — Lumina Capital Transactions Platform
+
+**Status:** Accepted
+**Date:** 2026-05-09
+**Author:** Eliran Ovadia
+
+This document is the single source of truth for architecture, schema, API contract, and business logic. No implementation begins without this document being agreed upon.
+
+---
+
+## 1. System Overview
+
+A financial transactions platform that ingests Excel files of trade data, computes FIFO portfolio positions, detects rule violations, serves analytics, and presents everything via a React frontend.
+
+### Data Flow
+
+```
+User uploads .xlsx
+        │
+        ▼
+POST /api/v1/upload-transactions
+        │
+        ├─► Acquire PostgreSQL advisory lock (409 if another upload in progress)
+        ├─► Validate file: size ≤ 10MB, extension + MIME type is xlsx
+        ├─► Stream-parse entire file (openpyxl read_only=True, data_only=True)
+        ├─► Validate every row (types, required fields, domain values)
+        │       └─► Any invalid rows → release lock, return 422 with error list
+        │                              (nothing written to DB)
+        │
+        ├─► BEGIN TRANSACTION
+        ├─► Save file to uploads table (filename, file_content as BYTEA)
+        ├─► Truncate: violations → client_analytics → positions → transactions
+        ├─► Bulk insert valid transactions (5,000 rows per ORM flush)
+        │
+        ├─► FIFO Engine (per client+ISIN, sorted by timestamp)
+        │       ├─► Compute realized P&L
+        │       ├─► Detect SELL_BEFORE_BUY violations (log + skip, do not short)
+        │       └─► Collect completed trades (for holding time analytics)
+        │
+        ├─► Compute unrealized P&L (last known price per ISIN across all clients)
+        ├─► Bulk insert positions
+        ├─► Simulate portfolio value over time per client (for volatility analytics)
+        ├─► Compute per-client analytics (avg_holding_days, value_range)
+        ├─► Bulk insert client_analytics
+        ├─► Detect DAY_TRADING violations
+        ├─► Detect RISK_CONCENTRATION violations
+        ├─► Bulk insert all violations
+        ├─► Set is_active = TRUE for this upload, FALSE for all others
+        ├─► COMMIT
+        └─► Release advisory lock → return summary
+
+User queries UI
+        ├─► GET /api/v1/clients              → DB read
+        ├─► GET /api/v1/clients/{id}/positions → DB read
+        ├─► GET /api/v1/violations            → DB read
+        ├─► GET /api/v1/analytics             → DB read (precomputed + live queries)
+        └─► GET /api/v1/uploads              → DB read (upload history)
+
+User reloads past upload
+        └─► POST /api/v1/uploads/{id}/activate
+                ├─► Acquire advisory lock
+                ├─► Load file_content from uploads table
+                ├─► Re-run steps from FIFO Engine onward (skip re-validation)
+                ├─► Set is_active = TRUE for this id, FALSE for others
+                └─► Release lock → return summary
+```
+
+### Key Architectural Decisions
+
+| Concern | Decision | ADR |
+|---------|----------|-----|
+| Upload behavior | Replace-on-upload (idempotent); history preserved in uploads table | ADR 009 |
+| Upload validation | Reject entire file if any row fails type/format check | ADR 011 |
+| Frontend delivery | React (Ant Design) built into FastAPI static files | ADR 008 |
+| Database | PostgreSQL (upgrade from SQLite minimum) | — |
+| ORM | SQLAlchemy ORM with mapped classes | ADR 010 |
+| Unrealized P&L price | Last transaction price per ISIN across all clients | — |
+| API prefix | `/api/v1/` on all routes | — |
+| Concurrency | PostgreSQL advisory lock — one upload at a time | — |
+| Local secrets | `.env` via pydantic-settings; `.env.example` committed | ADR 012 |
+| Async model | `async def` routes + `AsyncSession`; CPU-bound sections use `asyncio.to_thread()` | — |
+
+---
+
+## 2. Folder & File Structure
+
+```
+home-assignment/
+├── src/
+│   ├── __init__.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── secrets.py          # SecretsProvider abstraction (ADR 005)
+│   │   ├── config.py           # pydantic-settings: DB URL, port, log level (reads .env)
+│   │   └── database.py         # SQLAlchemy engine factory, SessionLocal, get_session()
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── app.py              # FastAPI factory, lifespan, static files mount at "/"
+│   │   ├── deps.py             # FastAPI dependency: yields Session, advisory lock helper
+│   │   ├── schemas.py          # Pydantic response models for all endpoints
+│   │   └── routes/
+│   │       ├── __init__.py
+│   │       ├── upload.py       # POST /api/v1/upload-transactions
+│   │       ├── clients.py      # GET /api/v1/clients, GET /api/v1/clients/{id}/positions
+│   │       ├── violations.py   # GET /api/v1/violations
+│   │       ├── analytics.py    # GET /api/v1/analytics
+│   │       └── uploads.py      # GET /api/v1/uploads, POST /api/v1/uploads/{id}/activate
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   ├── models.py           # Pydantic domain models: RawRow, CompletedTrade, etc.
+│   │   ├── fifo.py             # FIFO engine: positions, realized P&L, completed trades
+│   │   ├── violations.py       # Day trading + risk concentration detectors
+│   │   └── analytics.py        # Portfolio value simulation, holding time, concentration
+│   ├── ingestion/
+│   │   ├── __init__.py
+│   │   ├── parser.py           # openpyxl read_only+data_only: .xlsx bytes → list[RawRow]
+│   │   └── validator.py        # Row-level validation → (valid_rows, invalid_rows)
+│   └── db/
+│       ├── __init__.py
+│       ├── models.py           # SQLAlchemy ORM mapped classes (all 5 tables)
+│       └── repositories/
+│           ├── __init__.py
+│           ├── transactions.py # bulk_insert, truncate, get_by_client
+│           ├── positions.py    # bulk_insert, truncate, get_by_client
+│           ├── violations.py   # bulk_insert, truncate, get_all, get_by_client_and_type
+│           ├── analytics.py    # get_top_isins, get_isin_concentration
+│           ├── client_analytics.py  # bulk_insert, truncate, get_all
+│           └── uploads.py      # insert, get_all, get_by_id, set_active
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts          # dev proxy: /api → localhost:8000
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx             # layout, light/dark mode toggle, routing between sections
+│       ├── types.ts            # TypeScript interfaces matching all API response shapes
+│       ├── api/
+│       │   └── client.ts       # All fetch() calls — single module, no fetch() elsewhere
+│       └── components/
+│           ├── UploadSection.tsx    # Drag-and-drop file input, upload button, status/error
+│           ├── UploadHistory.tsx    # Table of past uploads with "Load" button per row
+│           ├── ClientSelector.tsx   # Ant Design Select populated from GET /clients
+│           ├── PositionsTable.tsx   # Ant Design Table: ISIN, Qty, Avg Cost, P&L columns
+│           ├── ViolationsTable.tsx  # Ant Design Table: Type badge, Severity, Description
+│           └── AnalyticsPanel.tsx   # Four analytics sub-sections in a 2×2 grid
+├── migrations/
+│   ├── alembic.ini
+│   ├── env.py
+│   └── versions/
+│       └── 0001_initial_schema.py  # All 5 tables
+├── tests/
+│   ├── conftest.py             # fixtures: test DB session, FastAPI TestClient
+│   ├── unit/
+│   │   ├── test_fifo.py
+│   │   ├── test_violations.py
+│   │   └── test_validation.py
+│   └── integration/
+│       └── test_api.py
+├── docs/
+│   ├── SPEC.md                 # this file
+│   └── decisions/              # ADRs 001–012
+├── assignment/
+├── .env.example                # placeholder values for all required env vars
+├── AI_USAGE.md
+├── Dockerfile                  # multi-stage: Node 20 build → Python 3.12 runtime
+├── docker-compose.yml
+├── Makefile
+├── pyproject.toml
+├── CLAUDE.md
+└── README.md
+```
+
+---
+
+## 3. Database Schema
+
+PostgreSQL. SQLAlchemy ORM (ADR 010). On every upload, `transactions`, `positions`, `violations`, and `client_analytics` are truncated and rebuilt. The `uploads` table is **never truncated** — it keeps the full file history.
+
+### `transactions`
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | SERIAL | PRIMARY KEY |
+| transaction_id | TEXT | NOT NULL, UNIQUE |
+| client_id | TEXT | NOT NULL |
+| isin | TEXT | NOT NULL |
+| action | TEXT | NOT NULL, CHECK IN ('Buy', 'Sell') |
+| quantity | NUMERIC(18,6) | NOT NULL |
+| price | NUMERIC(18,6) | NOT NULL |
+| timestamp | TIMESTAMP | NOT NULL |
+| created_at | TIMESTAMP | NOT NULL, DEFAULT NOW() |
+
+Indexes: `(client_id)`, `(isin)`, `(client_id, isin, timestamp)`
+
+### `positions`
+
+One row per (client, ISIN). Computed by the FIFO engine.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | SERIAL | PRIMARY KEY |
+| client_id | TEXT | NOT NULL |
+| isin | TEXT | NOT NULL |
+| quantity | NUMERIC(18,6) | NOT NULL, DEFAULT 0 |
+| avg_cost | NUMERIC(18,6) | NOT NULL, DEFAULT 0 |
+| realized_pnl | NUMERIC(18,6) | NOT NULL, DEFAULT 0 |
+| unrealized_pnl | NUMERIC(18,6) | NOT NULL, DEFAULT 0 |
+| last_price | NUMERIC(18,6) | NOT NULL, DEFAULT 0 |
+
+Constraints: UNIQUE `(client_id, isin)`. Index: `(client_id)`.
+
+### `violations`
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | SERIAL | PRIMARY KEY |
+| transaction_id | TEXT | NULLABLE |
+| client_id | TEXT | NOT NULL |
+| isin | TEXT | NULLABLE |
+| violation_type | TEXT | NOT NULL |
+| severity | TEXT | NOT NULL |
+| description | TEXT | NOT NULL |
+| detected_at | TIMESTAMP | NOT NULL, DEFAULT NOW() |
+
+Indexes: `(client_id)`, `(violation_type)`.
+
+**Violation matrix:**
+
+| violation_type | severity | Transaction inserted? | Processing continues? |
+|---|---|---|---|
+| INVALID_VALUE | ERROR | No | No — entire upload rejected (ADR 011) |
+| SELL_BEFORE_BUY | ERROR | Yes | Yes — FIFO match skipped, no short position |
+| DAY_TRADING | FLAG | Yes | Yes |
+| RISK_CONCENTRATION | WARNING | Yes | Yes |
+
+### `client_analytics`
+
+Precomputed per-client values. Rebuilt on every upload.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| client_id | TEXT | PRIMARY KEY |
+| avg_holding_days | NUMERIC(10,4) | NULLABLE (null = no completed trades) |
+| max_portfolio_value | NUMERIC(18,6) | NOT NULL |
+| min_portfolio_value | NUMERIC(18,6) | NOT NULL |
+| value_range | NUMERIC(18,6) | NOT NULL |
+
+### `uploads`
+
+File history. Never truncated.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | SERIAL | PRIMARY KEY |
+| filename | TEXT | NOT NULL |
+| file_content | BYTEA | NOT NULL |
+| row_count | INT | NOT NULL |
+| violation_count | INT | NOT NULL |
+| uploaded_at | TIMESTAMP | NOT NULL, DEFAULT NOW() |
+| is_active | BOOLEAN | NOT NULL, DEFAULT FALSE |
+
+### Truncation Sequence
+
+Truncation order (child before parent to respect logical dependencies):
+1. `violations`
+2. `client_analytics`
+3. `positions`
+4. `transactions`
+
+Insert order (parent before child):
+1. `transactions`
+2. `positions`
+3. `client_analytics`
+4. `violations`
+
+The `uploads` table is written to before truncation begins and is never part of the truncation sequence.
+
+All truncations and inserts happen inside a **single database transaction**. If any step fails, the entire upload rolls back and the DB is unchanged.
+
+---
+
+## 4. API Contract
+
+Base path: `/api/v1/`. All responses: `application/json`. All response shapes are defined as Pydantic models in `src/api/schemas.py` and declared as `response_model=` on each route.
+
+### POST `/api/v1/upload-transactions`
+
+**Request:** `multipart/form-data`, field `file` (`.xlsx`, max 10MB)
+
+**Response 200** — all rows valid, successfully processed:
+```json
+{
+  "upload_id": 3,
+  "status": "success",
+  "summary": {
+    "transactions_loaded": 150,
+    "positions_computed": 45,
+    "violations_detected": 7
+  }
+}
+```
+
+**Response 409** — another upload is already in progress (advisory lock held).
+
+**Response 422** — file has invalid rows (nothing was saved):
+```json
+{
+  "detail": "Upload rejected: file contains invalid rows",
+  "rejected_rows": [
+    {
+      "row_number": 5,
+      "transaction_id": "TXN005",
+      "column": "quantity",
+      "reason": "Expected a positive number, got: 'abc'"
+    }
+  ]
+}
+```
+
+**Response 422** — file is not `.xlsx` or is empty.
+**Response 500** — unexpected processing error.
+
+---
+
+### GET `/api/v1/clients`
+
+**Response 200:**
+```json
+[
+  {
+    "client_id": "C001",
+    "transaction_count": 25,
+    "position_count": 5,
+    "violation_count": 2
+  }
+]
+```
+
+---
+
+### GET `/api/v1/clients/{client_id}/positions`
+
+**Response 200:**
+```json
+[
+  {
+    "isin": "US0378331005",
+    "quantity": 100.0,
+    "avg_cost": 150.25,
+    "realized_pnl": 500.00,
+    "unrealized_pnl": -200.00,
+    "last_price": 148.25
+  }
+]
+```
+
+**Response 404:** `{"detail": "Client C001 not found"}`
+
+---
+
+### GET `/api/v1/violations`
+
+**Query params:** `client_id` (optional), `violation_type` (optional)
+
+**Response 200:**
+```json
+[
+  {
+    "id": 1,
+    "transaction_id": "TXN042",
+    "client_id": "C001",
+    "isin": "US0378331005",
+    "violation_type": "SELL_BEFORE_BUY",
+    "severity": "ERROR",
+    "description": "Client C001 attempted to sell 50 units of US0378331005 with no open position",
+    "detected_at": "2026-05-09T10:30:00"
+  }
+]
+```
+
+---
+
+### GET `/api/v1/analytics`
+
+**Response 200:**
+```json
+{
+  "top_traded_isins": [
+    {"isin": "US0378331005", "transaction_count": 45},
+    {"isin": "GB0002634946", "transaction_count": 30},
+    {"isin": "DE0005140008", "transaction_count": 25}
+  ],
+  "avg_holding_time_per_client": [
+    {"client_id": "C001", "avg_holding_days": 12.5},
+    {"client_id": "C002", "avg_holding_days": null}
+  ],
+  "most_volatile_client": {
+    "client_id": "C003",
+    "max_portfolio_value": 150000.00,
+    "min_portfolio_value": 50000.00,
+    "value_range": 100000.00
+  },
+  "isin_concentration": [
+    {
+      "isin": "US0378331005",
+      "client_count": 8,
+      "total_clients": 10,
+      "concentration_pct": 0.80,
+      "clients": ["C001", "C002", "C003", "C004", "C005", "C006", "C007", "C008"]
+    }
+  ],
+  "bonus": {
+    "top_realized_pnl_client": {"client_id": "C001", "realized_pnl": 12500.00},
+    "win_rate_per_client": [
+      {"client_id": "C001", "win_rate": 0.67, "winning_trades": 4, "total_trades": 6}
+    ],
+    "most_traded_day": {"date": "2024-01-15", "transaction_count": 42}
+  }
+}
+```
+
+`isin_concentration`: only ISINs present in >70% of clients with open positions.
+`avg_holding_days`: null for clients with no completed buy→sell trades.
+`most_volatile_client`: null if no data has been uploaded.
+`bonus`: optional section, omitted if no data.
+
+---
+
+### GET `/api/v1/uploads`
+
+Returns the list of all past uploads.
+
+**Response 200:**
+```json
+[
+  {
+    "id": 3,
+    "filename": "transactions_january.xlsx",
+    "row_count": 150,
+    "violation_count": 7,
+    "uploaded_at": "2026-05-09T10:00:00",
+    "is_active": true
+  },
+  {
+    "id": 2,
+    "filename": "transactions_sample.xlsx",
+    "row_count": 80,
+    "violation_count": 2,
+    "uploaded_at": "2026-05-09T09:30:00",
+    "is_active": false
+  }
+]
+```
+
+---
+
+### POST `/api/v1/uploads/{upload_id}/activate`
+
+Reloads a past upload — re-runs the full processing pipeline on the stored file.
+
+**Response 200:** same shape as successful `POST /upload-transactions`.
+**Response 404:** upload ID not found.
+**Response 409:** another upload/activate is in progress.
+
+---
+
+## 5. Business Logic Specification
+
+### 5.1 Validation (`ingestion/validator.py`)
+
+Applied by streaming through the entire file before any DB write. If `invalid_rows` is non-empty after the full pass → HTTP 422, nothing written.
+
+| Rule | Condition | Error |
+|------|-----------|-------|
+| Positive quantity | `quantity > 0` | "Expected a positive number" |
+| Positive price | `price > 0` | "Expected a positive number" |
+| Valid action | `action in {'Buy', 'Sell'}` | "Expected 'Buy' or 'Sell'" |
+| Numeric types | quantity and price must be numeric | "Expected a number, got: '{value}'" |
+| Required fields | all 7 columns present and non-null | "Missing required field: {field}" |
+| Expected columns | all 7 headers (ClientId, TransactionId, ISIN, Action, Quantity, Price, Timestamp) must exist | HTTP 422 before row iteration |
+
+Normalisation applied before validation:
+- Strip whitespace from all string fields
+- `action` is title-cased (`buy` → `Buy`)
+- `timestamp` parsed; if no timezone, treated as UTC
+
+### 5.2 FIFO Engine (`domain/fifo.py`)
+
+Input: all valid transactions for one `(client_id, isin)` pair, sorted by `timestamp ASC`.
+Output: one `Position` + a list of `CompletedTrade` tuples + any `SELL_BEFORE_BUY` violations.
+
+```
+lot_queue = deque()   # entries: {quantity, price, timestamp}
+realized_pnl = 0.0
+completed_trades = []
+
+for tx in sorted_transactions:
+    if tx.action == "Buy":
+        lot_queue.append({qty: tx.quantity, price: tx.price, ts: tx.timestamp})
+
+    elif tx.action == "Sell":
+        if lot_queue is empty:
+            emit SELL_BEFORE_BUY violation (full tx.quantity, no short position created)
+            continue
+
+        remaining_sell = tx.quantity
+        while remaining_sell > 0 and lot_queue not empty:
+            lot = lot_queue[0]
+            matched = min(remaining_sell, lot.quantity)
+            realized_pnl += matched * (tx.price - lot.price)
+            completed_trades.append(CompletedTrade(
+                buy_ts=lot.timestamp, sell_ts=tx.timestamp, quantity=matched
+            ))
+            lot.quantity -= matched
+            remaining_sell -= matched
+            if lot.quantity == 0:
+                lot_queue.popleft()
+
+        if remaining_sell > 0:
+            emit SELL_BEFORE_BUY violation (remaining_sell units, no short position)
+
+net_quantity = sum(lot.quantity for lot in lot_queue)
+avg_cost = weighted_average(lot_queue) if net_quantity > 0 else 0.0
+```
+
+**Unrealized P&L:** after all positions computed, `last_price[isin]` = price of the most recent transaction for that ISIN across all clients. `unrealized_pnl = net_quantity * (last_price - avg_cost)`.
+
+### 5.3 Day Trading Detection (`domain/violations.py`)
+
+**Rule:** Per client, more than 3 buy/sell pairs within any 24-hour window → `DAY_TRADING` (FLAG).
+
+A "pair" = one ISIN where both a Buy and a Sell exist within a 24h window anchored at the Buy's timestamp.
+
+```
+for each client:
+    transactions_sorted = sort by timestamp
+    for each Buy transaction t:
+        window_end = t.timestamp + 24h
+        pairs = count of distinct ISINs where a Sell also exists
+                in [t.timestamp, window_end] for this client
+        if pairs > 3:
+            emit DAY_TRADING violation
+            break  # one violation per client
+```
+
+### 5.4 Risk Concentration Detection (`domain/violations.py`)
+
+**Rule:** Per client, if a single ISIN's market value exceeds 50% of total portfolio → `RISK_CONCENTRATION` (WARNING).
+
+```
+for each client:
+    total_value = sum(position.quantity * position.last_price)
+    if total_value == 0: skip
+    for each position:
+        if (position.quantity * position.last_price) / total_value > 0.50:
+            emit RISK_CONCENTRATION violation
+```
+
+### 5.5 Analytics (`domain/analytics.py`)
+
+**Top 3 most traded ISINs**
+SQL: `GROUP BY isin ORDER BY COUNT(*) DESC LIMIT 3` on `transactions`.
+
+**Average holding time per client**
+From `CompletedTrade` records collected during FIFO:
+`avg_holding_days = mean((sell_ts - buy_ts).days for all completed trades per client)`
+Stored in `client_analytics.avg_holding_days` during upload processing.
+
+**Most volatile client**
+For each client, simulate portfolio value after every transaction (using last known price per ISIN at that timestamp). `value_range = max(values) - min(values)`. Client with highest `value_range` is returned. Stored in `client_analytics`.
+
+**ISIN concentration**
+Computed at query time from `positions`:
+`total_clients` = DISTINCT client count with any position.
+ISINs where `DISTINCT client_count / total_clients > 0.70` → included with client list.
+
+**Bonus analytics**
+
+| Metric | Computation |
+|--------|-------------|
+| Top realized P&L client | `SELECT client_id, SUM(realized_pnl) FROM positions GROUP BY client_id ORDER BY SUM DESC LIMIT 1` |
+| Win rate per client | % of CompletedTrades where sell_price > avg buy_price of that trade |
+| Most traded day | `SELECT DATE(timestamp), COUNT(*) FROM transactions GROUP BY date ORDER BY COUNT DESC LIMIT 1` |
+
+---
+
+## 6. Frontend Component Tree
+
+Library: **Ant Design**. Light/dark mode toggle in the top nav bar (Ant Design `theme.algorithm` toggle).
+
+```
+App
+├── TopNav
+│   ├── "Lumina Capital" logo
+│   └── Light/Dark mode toggle (Ant Design Switch)
+│
+├── UploadSection
+│   ├── Ant Design Upload (drag-and-drop, accepts .xlsx)
+│   ├── "Upload & Process" button
+│   └── Status display:
+│       ├── Idle: instruction text
+│       ├── Loading: Ant Design Spin
+│       ├── Success: summary (X transactions, Y violations)
+│       └── Error (422): Ant Design Table of rejected rows
+│
+├── UploadHistory              ← GET /api/v1/uploads
+│   Ant Design Table: Filename | Date | Rows | Violations | Status badge | "Load" button
+│
+├── ClientSelector             ← GET /api/v1/clients
+│   Ant Design Select dropdown (client_id options)
+│
+├── PositionsTable             ← GET /api/v1/clients/{id}/positions
+│   Columns: ISIN | Quantity | Avg Cost | Realized P&L | Unrealized P&L | Last Price
+│   P&L values: green (positive) / red (negative) via Ant Design Tag or custom render
+│
+├── ViolationsTable            ← GET /api/v1/violations
+│   Columns: Client | ISIN | Type (Ant Design Badge) | Severity | Description
+│   Filters: client_id select, violation_type select
+│
+└── AnalyticsPanel             ← GET /api/v1/analytics
+    ├── TopISINs: Ant Design Table (ISIN, transaction count)
+    ├── HoldingTime: Ant Design Table (client, avg days)
+    ├── MostVolatileClient: Ant Design Card (client ID, value range)
+    └── ISINConcentration: Ant Design Table (ISIN, %, client list as tags)
+```
+
+All `fetch()` calls live exclusively in `frontend/src/api/client.ts`.
+
+---
+
+## 7. Testing Plan
+
+### Unit Tests (no DB required)
+
+**test_fifo.py**
+- Basic buy → sell: correct realized P&L
+- Multiple lots: FIFO ordering (oldest lot consumed first)
+- Partial sell spanning two lots
+- Sell with empty queue → SELL_BEFORE_BUY violation emitted, no position change
+- Oversell (sell more than held) → SELL_BEFORE_BUY for excess quantity
+- Buy only (no sell) → open position, unrealized P&L only
+
+**test_violations.py**
+- 4 round-trips in 24h → DAY_TRADING flagged
+- 3 round-trips in 24h → not flagged
+- ISIN at 60% of portfolio → RISK_CONCENTRATION flagged
+- ISIN at 40% → not flagged
+
+**test_validation.py**
+- `quantity = 0` → INVALID_VALUE, upload rejected
+- `price = -5` → INVALID_VALUE, upload rejected
+- `action = "HOLD"` → INVALID_VALUE, upload rejected
+- String in quantity column → INVALID_VALUE, upload rejected
+- Valid row → passes through unchanged
+
+### Integration Tests (requires DB)
+
+**test_api.py**
+- Upload valid `.xlsx` → 200, correct summary counts, data in DB
+- Upload `.xlsx` with one invalid row → 422, nothing written to DB
+- Upload `.xlsx` with missing expected columns → 422 before row processing
+- Upload non-xlsx file → 422
+- `GET /clients` after upload → correct client list
+- `GET /clients/{id}/positions` → correct positions
+- `GET /violations` → violations list
+- `GET /analytics` → all four required analytics sections present
+- `GET /uploads` → lists past uploads
+- `POST /uploads/{id}/activate` → reloads past file, data changes in DB
+
+---
+
+## 8. Architecture Patterns
+
+| Pattern | Where |
+|---------|-------|
+| **Layered Architecture** | `api/` → `domain/` → `db/` — dependencies only point downward |
+| **Repository Pattern** | `db/repositories/` — all DB access behind named functions, no SQL in routes |
+| **Dependency Injection** | FastAPI `Depends(get_session)` — session injected into routes, swappable in tests |
+| **Service Layer** | `domain/` — pure business logic with no HTTP or DB imports |
+| **Strategy / Protocol** | `src/core/secrets.py` — `SecretsProvider` protocol enables backend swap |
+| **Factory** | `src/api/app.py` — `create_app()` factory allows different configs in tests |
+
+---
+
+## 9. Security Considerations
+
+| Concern | Mitigation |
+|---------|-----------|
+| Malicious Excel macros | `openpyxl` with `data_only=True` — formulas and macros are never executed |
+| Oversized file upload | 10MB limit enforced before file is opened |
+| Wrong file type | Validate both file extension AND MIME type (Content-Type header) |
+| Corrupt Excel file | Entire parse wrapped in try/except → 422 with clear message |
+| SQL injection | SQLAlchemy ORM uses parameterised queries exclusively |
+| Concurrent upload corruption | PostgreSQL advisory lock — one upload at a time, 409 for concurrent attempts |
+| Sensitive data in logs | No transaction data or secrets logged; only counts and status codes |
+
+---
+
+## 10. Production Scaling Notes
+
+These are documented for interview discussion — not implemented in the assignment.
+
+| Concern | Assignment approach | Production path |
+|---------|--------------------|----|
+| Concurrent uploads | Advisory lock → 409 | Message queue (Celery + Redis): upload returns job ID, client polls for status. Users never get rejected. |
+| Large file parsing | openpyxl read_only streaming, 10MB limit | `python-calamine` (Rust-based, 10–100× faster) + 100MB limit |
+| CPU-bound FIFO | Single-threaded Python via `asyncio.to_thread()` | See `PRODUCTION_ROADMAP.md` — parallel `ProcessPoolExecutor` per-(client, ISIN) pair |
+| DB I/O | `AsyncSession` + `asyncpg` driver | Already implemented — production path already chosen |
+| Analytics latency | Precomputed on upload | Redis cache with TTL; invalidate on new upload |

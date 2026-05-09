@@ -4,8 +4,8 @@ help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 install:  ## Install all dependencies and set up pre-commit hooks
-	uv sync --extra dev
-	uv run pre-commit install
+	pip install -e ".[dev]"
+	pre-commit install
 
 lint:  ## Run ruff linter
 	ruff check .
@@ -44,4 +44,5 @@ clean:  ## Remove all build artifacts and caches
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type d -name .pytest_cache -exec rm -rf {} +
 	find . -type d -name .ruff_cache -exec rm -rf {} +
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
 	find . -name "*.pyc" -delete
