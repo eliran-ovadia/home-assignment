@@ -12,35 +12,31 @@ real value with `settings.db_password.get_secret_value()`.
 
 from __future__ import annotations
 
-from pydantic import Field, SecretStr
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Typed application configuration."""
 
-    app_env: str = Field(default="development", description="development | production")
-    log_level: str = Field(default="INFO", description="DEBUG | INFO | WARNING | ERROR | CRITICAL")
+    app_env: str = "development"
+    log_level: str = "INFO"
 
-    db_host: str = Field(default="localhost")
-    db_port: int = Field(default=5432)
-    db_name: str = Field(default="assignment")
-    db_user: str = Field(default="postgres")
-    db_password: SecretStr = Field(description="PostgreSQL password (required, never logged)")
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "assignment"
+    db_user: str = "postgres"
+    db_password: SecretStr  # required — populated from DB_PASSWORD
 
-    # `.env` is read for local dev. In CI/production these come from the OS env.
-    # `extra="ignore"` keeps the model permissive — adding a new env var won't raise.
+    # `extra="forbid"` rejects any unknown key in `.env` so a typo such as
+    # `DB_PASWORD=...` raises at startup instead of silently using the default.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore",
+        extra="forbid",
     )
 
 
-# Module-level singleton — instantiated at import time so a misconfigured
-# environment fails fast rather than after the first request lands.
-# `db_password` is a required field; pydantic-settings populates it from the
-# environment (`.env` or OS env var DB_PASSWORD), not from the constructor —
-# the type checker can't see that, so we suppress the missing-argument warning.
-settings = Settings()  # ty: ignore[missing-argument]
+# Instantiated at import so a misconfigured environment fails fast.
+settings = Settings()  # ty: ignore[missing-argument] — db_password populated from env

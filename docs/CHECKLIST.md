@@ -5,6 +5,8 @@ Derived from `assignment/Final_Assignment.md`. Each item is marked against the c
 Legend (Spec): ✅ Covered in spec | ⚠️ Gap or concern | ❌ Missing
 Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
+> **Status:** PR 1 (`feat/foundation`) merged 2026-05-10 — infrastructure only (deps, `Settings`, async DB engine, `alembic.ini`, `.env.example`). A–H rows remain ⬜ until their implementation PR lands. PR-level tracker lives in [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
 ---
 
 ## Part A — Data Ingestion & Validation

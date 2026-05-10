@@ -497,3 +497,32 @@ A: Updated:
    - `AI_USAGE.md` — replaced the SecretsProvider mention in the
      design-patterns paragraph with the Factory pattern (`create_app()`)
    - This file — added Session 9 (the entry you are reading)
+
+────────────────────────────────────────────────────────────────────────────────
+SESSION 10 — PR 1 REVIEW & MERGE PREP
+────────────────────────────────────────────────────────────────────────────────
+
+Q: PR reviewer agent flagged a list of issues — please evaluate each and only
+   apply what makes sense.
+
+A: 4 of 16 held up and got fixed:
+   - extra="ignore" → "forbid" (catches `.env` typos at startup)
+   - dropped inconsistent Field() wrappers in Settings
+   - moved the # ty: ignore rationale inline with the suppression
+   - removed redundant future=True from create_async_engine
+
+   12 didn't:
+   - migrations/env.py "missing" — out of PR 1 scope (PR 2 per the plan)
+   - AsyncIterator vs AsyncGenerator — both valid; ty already approved
+   - "needs: [lint, test] commented out" — factually wrong (# was on the
+     description line above)
+   - settings.local.json reference — fabricated
+   - the rest were stylistic preferences or restatements of correct code
+   AI_USAGE.md updated with the four accepted mistakes and the rationale.
+
+Q: How do I deal with a code change after I've opened a PR?
+
+A: Pushing more commits to the same branch auto-updates the PR — no re-open
+   needed. For your case (one commit then merge), apply review feedback
+   before committing. Squash-and-merge in the GitHub UI is the cleanest way
+   to keep main history tidy if you ever do commit messily on a branch.

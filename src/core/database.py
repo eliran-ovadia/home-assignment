@@ -56,7 +56,6 @@ def init_db() -> None:
         # which prevents stale-connection errors when Postgres or a load balancer
         # closes idle sockets between requests.
         pool_pre_ping=True,
-        future=True,
     )
     _sessionmaker = async_sessionmaker(
         _engine,
