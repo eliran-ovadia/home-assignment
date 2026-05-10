@@ -21,9 +21,7 @@ Before introducing any library, pattern, or architectural choice, document **why
 | Lint + format | Ruff | — |
 | Type checking | ty (Astral) | — |
 | Database access | SQLAlchemy ORM + Alembic migrations | [ADR 010](docs/decisions/010-orm-switch.md) |
-| Secrets (abstraction) | `SecretsProvider` protocol in `src/core/secrets.py` | [ADR 005](docs/decisions/005-secret-manager-over-dotenv.md) |
-| Local development secrets | `.env` via pydantic-settings; `.env.example` committed | — |
-| CI secrets | GitHub Actions Secrets → `EnvironmentSecretsProvider` | — |
+| Configuration & secrets | `pydantic-settings` reads `.env` locally; OS env vars in CI/Docker. `SecretStr` redacts the password in logs and `repr`. | — |
 | Package manager | pip | |
 | UI framework | Ant Design (React) | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
 | Frontend delivery | React build served by FastAPI static files | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
@@ -38,7 +36,7 @@ The full technical specification lives in [`docs/SPEC.md`](docs/SPEC.md). Summar
 
 ```
 src/
-├── core/       # Cross-cutting infrastructure: config, secrets, DB engine
+├── core/       # Cross-cutting infrastructure: config, DB engine
 ├── api/        # FastAPI routes, Pydantic response schemas, dependencies
 ├── domain/     # Pure business logic: FIFO engine, violation detectors, analytics
 ├── ingestion/  # Excel parsing and row-level validation
@@ -87,17 +85,19 @@ When changing a tool or adding one, update **all** of these files. This map is t
 | Linter / formatter (ruff) | `pyproject.toml` `[tool.ruff]` + dev dep, `Makefile` `lint`/`format`, `.pre-commit-config.yaml`, `ci.yml` |
 | Test runner (pytest) | `pyproject.toml` `[tool.pytest.ini_options]`, `Makefile` test targets, `ci.yml` test job |
 | Database engine | `docker-compose.yml`, `ci.yml` service block, `Dockerfile` (if driver needs OS libs), relevant ADR |
-| Secrets pattern | `src/core/secrets.py`, `.env.example`, `docker-compose.yml` env notes, `docs/decisions/005`, `README.md` secrets section |
-| Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty] python-version`, `docs/decisions/001` |
+| Configuration | `src/core/config.py` (`Settings`), `.env.example`, `docker-compose.yml` env block, `README.md` setup section |
+| Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty.environment] python-version`, `docs/decisions/001` |
 | ORM models | `src/db/models.py`, `migrations/versions/`, `docs/decisions/010` |
 | User sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (localStorage + header injection), `docs/decisions/015` |
 
-## Secrets & Configuration
+## Configuration & Secrets
 
-- **Secrets** (DB password, API keys): retrieved via `get_secret(key)` from `src.core.secrets`. Never call `os.environ` directly in business logic.
-- **Non-sensitive config** (port, log level, env name): use `pydantic-settings` in `src/core/config.py`.
-- **Local dev**: copy `.env.example` to `.env` and fill in values. `pydantic-settings` reads it automatically.
-- **CI (GitHub Actions)**: secrets are configured in repository settings and injected as env vars by the workflow.
+All runtime configuration — including the database password — lives in `src/core/config.py` as a single `pydantic-settings` `Settings` model. Business code reads `from src.core.config import settings`; nothing else should call `os.environ` directly.
+
+- **DB password** is held in `pydantic.SecretStr`, so it is automatically redacted in `repr(settings)` and accidental log output. Access the real value with `settings.db_password.get_secret_value()` (currently only `src/core/database.py` does this when composing the asyncpg URL).
+- **Local dev**: copy `.env.example` to `.env` and fill in values. `pydantic-settings` reads `.env` automatically.
+- **CI (GitHub Actions)**: env vars are injected from repository secrets by the workflow.
+- **Docker**: env vars come from the `environment:` block in `docker-compose.yml`; the password is forwarded from the host shell.
 
 ## Git Discipline
 

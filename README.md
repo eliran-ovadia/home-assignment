@@ -10,12 +10,11 @@ A financial transactions platform built to professional standards. Every archite
 |---------|--------|-----------------|
 | Language | Python 3.12 | [ADR 001](docs/decisions/001-python-version.md) |
 | HTTP framework | FastAPI + uvicorn | [ADR 002](docs/decisions/002-fastapi-over-alternatives.md) |
-| Lint & format | Ruff | [ADR 003](docs/decisions/003-ruff-toolchain.md) |
-| Type checking | ty (Astral) | [ADR 006](docs/decisions/006-ty-over-mypy.md) |
+| Lint & format | Ruff | — |
+| Type checking | ty (Astral) | — |
 | Database access | SQLAlchemy ORM | [ADR 010](docs/decisions/010-orm-switch.md) |
 | Migrations | Alembic | [ADR 010](docs/decisions/010-orm-switch.md) |
-| Secrets | `SecretsProvider` abstraction | [ADR 005](docs/decisions/005-secret-manager-over-dotenv.md) |
-| Local secrets | `.env` via pydantic-settings | [ADR 012](docs/decisions/012-dotenv-local-development.md) |
+| Configuration & secrets | `pydantic-settings` + `.env` (DB password held in `SecretStr`) | — |
 | Package manager | pip | |
 | UI framework | React + Ant Design | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
 | Frontend delivery | React build served by FastAPI | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
@@ -32,7 +31,7 @@ A financial transactions platform built to professional standards. Every archite
 ```
 home-assignment/
 ├── src/                        # Python backend
-│   ├── core/                   # Config, secrets, DB engine
+│   ├── core/                   # Config + DB engine
 │   ├── api/                    # FastAPI routes + Pydantic response schemas
 │   │   └── routes/             # One file per endpoint group
 │   ├── domain/                 # Pure business logic (FIFO, violations, analytics)
@@ -63,7 +62,7 @@ make install
 # 2. Install frontend dependencies
 cd frontend && npm install && cd ..
 
-# 3. Configure secrets
+# 3. Configure environment
 cp .env.example .env
 # Edit .env and set DB_PASSWORD (and any other required values)
 
@@ -147,13 +146,17 @@ curl http://localhost:8000/api/v1/analytics \
 
 ---
 
-## Secrets & configuration
+## Configuration & secrets
 
-No secrets are hardcoded. For local development, copy `.env.example` to `.env` and fill in your values — `pydantic-settings` reads it automatically.
+No secrets are hardcoded. All runtime values — including the database password — live in `src/core/config.py` as a `pydantic-settings` `Settings` model.
 
-In CI (GitHub Actions), secrets are injected as environment variables from repository settings. In production, swap `EnvironmentSecretsProvider` for a Vault or cloud-provider implementation — no business logic changes required.
+- **Local dev:** copy `.env.example` to `.env` and fill in your values; `pydantic-settings` reads it automatically.
+- **CI (GitHub Actions):** values are injected as environment variables from repository secrets.
+- **Docker:** values come from the `environment:` block in `docker-compose.yml`; the password is forwarded from the host shell.
 
-See `src/core/secrets.py` and [ADR 005](docs/decisions/005-secret-manager-over-dotenv.md).
+The DB password is held in `pydantic.SecretStr`, so it is redacted in `repr(settings)` and any accidental log output. Access the real value with `settings.db_password.get_secret_value()` (currently only `src/core/database.py` does this, when composing the asyncpg URL).
+
+For a production deployment, the natural next step is swapping `.env` / OS env vars for a managed store (AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault). See `docs/PRODUCTION_ROADMAP.md` §7.
 
 ---
 
@@ -165,9 +168,6 @@ Every non-obvious technical choice is documented in [`docs/decisions/`](docs/dec
 |---|----------|
 | [001](docs/decisions/001-python-version.md) | Python 3.12 |
 | [002](docs/decisions/002-fastapi-over-alternatives.md) | FastAPI over Flask / Django REST |
-| [001](docs/decisions/001-python-version.md) | Python 3.12 |
-| [002](docs/decisions/002-fastapi-over-alternatives.md) | FastAPI over Flask / Django REST |
-| [005](docs/decisions/005-secret-manager-over-dotenv.md) | SecretsProvider protocol |
 | [008](docs/decisions/008-react-frontend-architecture.md) | React served as FastAPI static files |
 | [009](docs/decisions/009-replace-on-upload.md) | Replace-on-upload (historical — led to ADR 014) |
 | [010](docs/decisions/010-orm-switch.md) | SQLAlchemy ORM |

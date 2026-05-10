@@ -172,7 +172,7 @@ Also updates:
 
 | PR | Branch | Status | Merged |
 |----|--------|--------|--------|
-| 1 | `feat/foundation` | ⬜ Not started | — |
+| 1 | `feat/foundation` | ✅ Done | 2026-05-10 |
 | 2 | `feat/database-layer` | ⬜ Not started | — |
 | 3 | `feat/domain-and-ingestion` | ⬜ Not started | — |
 | 4 | `feat/api-layer` | ⬜ Not started | — |

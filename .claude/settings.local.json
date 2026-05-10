@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Skill(claude-api)",
-      "Bash(.venv\\\\Scripts\\\\python -m pytest tests/unit/ -x -q)"
+      "Bash(.venv\\\\Scripts\\\\python -m pytest tests/unit/ -x -q)",
+      "Bash(python *)",
+      "Bash(ruff check *)",
+      "Bash(ruff format *)",
+      "Bash(ty check *)",
+      "Bash(pip install *)",
+      "Bash(DB_PASSWORD=test123 python -c \"from src.core.config import settings; from src.core.database import _build_database_url; print\\(_build_database_url\\(\\)\\)\")"
     ]
   }
 }

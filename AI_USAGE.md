@@ -45,7 +45,7 @@ After the specification was drafted, we ran a formal review. Twenty-seven questi
 
 *On the volatility definition:* We pushed back on Claude's initial interpretation of "most volatile client". Claude's first instinct was "client with the most stocks" — but we reread the assignment and corrected it: the spec asks for the client whose total portfolio value shows the largest variation over time (max − min across transaction timestamps). Claude updated the spec.
 
-*On design patterns:* We asked Claude to name the design patterns in use so we could defend them in conversation. The answer: Layered Architecture (api → domain → db, one-directional dependencies), Repository Pattern (all DB access behind repository functions), Dependency Injection (FastAPI's `Depends()`), Service Layer (domain/ is pure business logic with zero HTTP or DB imports), and Strategy/Protocol (SecretsProvider protocol for swappable secret backends). Every pattern is now defensible by name.
+*On design patterns:* We asked Claude to name the design patterns in use so we could defend them in conversation. The answer: Layered Architecture (api → domain → db, one-directional dependencies), Repository Pattern (all DB access behind repository functions), Dependency Injection (FastAPI's `Depends()`), Service Layer (domain/ is pure business logic with zero HTTP or DB imports), and the Factory pattern (`create_app()` allows different configurations in tests). Every pattern is now defensible by name.
 
 *On testability:* We asked whether the architecture is modular enough to be independently testable at each layer. The answer was yes by construction: `domain/` and `ingestion/` are pure Python functions with no framework imports — unit tests need no DB, no HTTP client, no fixtures. `db/repositories/` needs a DB but no HTTP. `api/routes/` uses FastAPI's `TestClient` with a test DB. The dependency injection model (not import model) is what makes this possible.
 
@@ -210,7 +210,27 @@ Both answers were already in the spec (ADRs 014 and 015), but the planning sessi
 
 ## Phase 2 — Implementation
 
-*This section will be filled in as each component is implemented.*
+### PR 1 — Review Cycle (`feat/foundation`)
+
+After implementing PR 1, the CI Claude PR reviewer agent flagged sixteen issues. We triaged each one rather than blanket-accepting — four held up and got fixed; twelve didn't.
+
+**Accepted (4 fixed):**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `extra="ignore"` on the `Settings` model — a typo in `.env` (e.g. `LOG_LEVL=DEBUG`) would silently fall back to the default instead of raising | Reviewer flagged the misconfiguration footgun | Changed to `extra="forbid"` so unknown `.env` keys raise at startup |
+| Inconsistent `Field(default=..., description=...)` calls — descriptions did nothing for validation, and not every field had one | Reviewer called out the mix as noise | Dropped `Field()` entirely; direct type annotations everywhere |
+| The `# ty: ignore[missing-argument]` suppression was justified in a comment block six lines above the line — easy to delete by accident in a future cleanup | Reviewer pointed out the suppression was load-bearing but spatially separated from its rationale | Moved the rationale inline next to the `# ty: ignore` |
+| `future=True` on `create_async_engine` — a no-op in SQLAlchemy 2.x | Reviewer flagged it as redundant | Removed |
+
+**Rejected (12 push-backs):** the reviewer also raised concerns that didn't hold up after triage:
+
+- Some were out of PR 1 scope (`migrations/env.py` belongs to PR 2 per `IMPLEMENTATION_PLAN.md`)
+- Some were factually wrong (the `needs: [lint, test]` CI gate is not commented out — the `#` in the reviewer's quote was on the *description* line above; an alleged reference to `_build_database_url` in `.claude/settings.local.json` does not exist)
+- Some were stylistic preferences where ty already approved the code (`AsyncIterator` is a valid annotation for a FastAPI dependency that yields — `AsyncGenerator` is a subtype, not a correctness fix)
+- Some restated correct code as if it were a critique (`pool_pre_ping=True`, `expire_on_commit=False`, blank `sqlalchemy.url`)
+
+Treating the AI review as **advisory rather than authoritative** — and keeping a paper trail of which suggestions we accepted and which we rejected with reasons — is itself the discipline. Auto-applying every reviewer suggestion would have introduced a `migrations/env.py` two PRs early and degraded a perfectly correct type annotation.
 
 ### Backend
 

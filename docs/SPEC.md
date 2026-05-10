@@ -86,7 +86,7 @@ User activates a past upload (instant — results already in DB)
 | Unrealized P&L price | Last transaction price per ISIN in the uploaded file | — |
 | API prefix | `/api/v1/` on all routes | — |
 | Concurrency | Per-user advisory lock — one upload per user at a time | ADR 014 |
-| Local secrets | `.env` via pydantic-settings; `.env.example` committed | ADR 012 |
+| Configuration & secrets | `pydantic-settings` reads `.env` locally and OS env vars in CI/Docker; DB password held in `SecretStr` | — |
 | Async model | `async def` routes + `AsyncSession`; CPU-bound sections use `asyncio.to_thread()` | — |
 
 ---
@@ -99,8 +99,7 @@ home-assignment/
 │   ├── __init__.py
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── secrets.py          # SecretsProvider abstraction (ADR 005)
-│   │   ├── config.py           # pydantic-settings: DB URL, port, log level (reads .env)
+│   │   ├── config.py           # pydantic-settings: DB host/port/name/user, password (SecretStr), log level
 │   │   └── database.py         # SQLAlchemy engine factory, AsyncSession, get_session()
 │   ├── api/
 │   │   ├── __init__.py
@@ -715,7 +714,6 @@ App
 | **Repository Pattern** | `db/repositories/` — all DB access behind named functions, no SQL in routes |
 | **Dependency Injection** | FastAPI `Depends(get_session)`, `Depends(get_current_user)` — injected into routes, swappable in tests |
 | **Service Layer** | `domain/` — pure business logic with no HTTP or DB imports |
-| **Strategy / Protocol** | `src/core/secrets.py` — `SecretsProvider` protocol enables backend swap |
 | **Factory** | `src/api/app.py` — `create_app()` factory allows different configs in tests |
 
 ---

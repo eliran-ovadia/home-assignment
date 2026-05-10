@@ -90,16 +90,16 @@ Key changes required:
 
 ## 7. Secrets Management — Cloud Provider
 
-**Current:** `.env` file for local development; GitHub Actions Secrets for CI. The `SecretsProvider` protocol in `src/core/secrets.py` is already designed for a backend swap.
+**Current:** `pydantic-settings` reads `.env` for local development; GitHub Actions Secrets are injected as env vars in CI; `docker-compose.yml` forwards the password from the host shell. The DB password is held in `pydantic.SecretStr`, which keeps it out of `repr` and accidental log output but does not provide rotation, audit trails, or per-environment access control.
 
-**Production:** Replace `EnvironmentSecretsProvider` with a cloud-provider implementation:
-- AWS: `boto3` + AWS Secrets Manager
+**Production:** Move sensitive values out of env vars and into a managed secrets store:
+- AWS: `boto3` + AWS Secrets Manager (or SSM Parameter Store)
 - GCP: `google-cloud-secret-manager`
 - HashiCorp Vault: `hvac` client
 
-No business logic changes required — only the provider passed to `configure_provider()` at startup changes.
+The cleanest implementation path is to introduce a small `SecretsProvider` Protocol in `src/core/` (one method, `get(key) -> SecretStr`) with the default reading from settings and a production implementation reading from the chosen store. `Settings.db_password` would then be populated from that provider during `init_db()` rather than at import time. This is a deliberate non-decision for the assignment scope — the abstraction was prototyped early in the project and removed once it became clear it added a layer that wasn't earning its keep without a real backend behind it.
 
-**Why deferred:** Production secrets infrastructure is environment-specific. The abstraction is in place; the implementation is a one-file swap.
+**Why deferred:** Production secrets infrastructure is environment-specific (which cloud, which IAM model, which rotation policy). For the assignment, env-driven configuration is the right scope; the migration path is well understood and small.
 
 ---
 
