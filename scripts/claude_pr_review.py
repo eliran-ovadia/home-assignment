@@ -6,6 +6,7 @@ assignment/Final_Assignment.md, and docs/SCORE.md as cached prompt blocks (so
 repeated PRs pay the cache-write cost only once per cache TTL), fetches the git
 diff, and posts a structured review as a PR comment.
 """
+
 import os
 import subprocess
 import sys
@@ -27,8 +28,12 @@ def load_file(path: Path) -> str:
 
 
 def get_pr_diff(base_sha: str, head_sha: str) -> tuple[str, bool]:
-    result = subprocess.run(
-        ["git", "diff", f"{base_sha}...{head_sha}"],
+    # `git` is resolved from PATH inside the GitHub-hosted runner; the SHAs
+    # come from `github.event.pull_request.{base,head}.sha`, which GitHub
+    # controls. Both S603 (untrusted input) and S607 (partial path) are
+    # acceptable in this CI-only context.
+    result = subprocess.run(  # noqa: S603
+        ["git", "diff", f"{base_sha}...{head_sha}"],  # noqa: S607
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

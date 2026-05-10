@@ -38,7 +38,7 @@ jobs:
   review:
     name: Claude PR Review
     # Only runs on pull requests, and only after lint + tests pass
-    needs: [lint, test]
+    #needs: [lint, test]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:

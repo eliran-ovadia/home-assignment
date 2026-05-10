@@ -435,3 +435,65 @@ A: CHECKLIST.md updated with Impl column (⬜ / 🔄 / ✅).
    writing FIFO engines, async FastAPI routes, and migration files.
 
    AI_USAGE.md updated with the branch debate.
+
+────────────────────────────────────────────────────────────────────────────────
+SESSION 9 — REMOVING THE SECRETS ABSTRACTION (PR 1 cleanup)
+────────────────────────────────────────────────────────────────────────────────
+
+Q: If we do not plan to use secrets.py in this project, please delete the file
+   and all mentions of it in the code.
+
+A: Deleted `src/core/secrets.py` and reworked the foundation to read the DB
+   password directly from `pydantic-settings`:
+
+   - `Settings` gains a `db_password: SecretStr` field (required). pydantic
+     populates it from `.env` locally and from OS env vars in CI / Docker.
+   - `SecretStr` redacts the password in `repr(settings)` and in any
+     accidental log output. The real value is reached via
+     `.get_secret_value()`, used only by `_build_database_url()` in
+     `src/core/database.py`.
+   - `database.py` no longer imports anything secrets-related.
+   - One ty suppression on `settings = Settings()` because pydantic-settings
+     populates required fields from the environment, not the constructor —
+     a known limitation that the type checker can't see through.
+
+   This reverses the design recorded in Session 4 (Q14, "Strategy/Protocol —
+   SecretsProvider protocol") and confirmed in Session 7 (ADR 005 was kept as
+   a "defensible architecture decision"). Why reverse it now?
+
+   - The abstraction had no second implementation. With only
+     `EnvironmentSecretsProvider` shipping, the protocol added a layer of
+     indirection that wasn't earning its keep.
+   - `pydantic.SecretStr` already gives us the one safety property we cared
+     about (no accidental logging) without a custom protocol.
+   - Removing it shortens the foundation by one file and one moving part —
+     useful given the assignment scope.
+
+   The migration path to a real managed secrets backend (AWS / GCP / Vault)
+   is documented in `docs/PRODUCTION_ROADMAP.md` §7. If that day comes,
+   re-introducing a small Protocol around `Settings.db_password` is a
+   one-file change.
+
+Q: Please make sure all of the files you mentioned are aligned with the
+   deleted secrets.py file (and a good way to ingest them into your context).
+
+A: Updated:
+   - Deleted `docs/decisions/005-secret-manager-over-dotenv.md`
+   - `CLAUDE.md` — collapsed three secrets rows into one "Configuration &
+     secrets" row; updated `src/` tree comment; replaced the "Secrets
+     pattern" infrastructure-map row with a "Configuration" row; rewrote
+     the "Configuration & Secrets" section
+   - `README.md` — replaced the two secrets rows with one combined row;
+     updated `src/core/` tree comment; renamed "Configure secrets" step to
+     "Configure environment"; rewrote the "Secrets & configuration"
+     section; removed the ADR 005 row from the ADR table; removed an
+     accidental duplicate of the ADR 001/002 rows
+   - `docs/SPEC.md` — updated the architecture-table secrets row;
+     removed `secrets.py` from the directory tree; removed the
+     "Strategy / Protocol" row from the design-patterns table
+   - `docs/PRODUCTION_ROADMAP.md` §7 — rewrote to reflect that the
+     abstraction no longer ships, and described the path to add it back
+     when a real managed store is adopted
+   - `AI_USAGE.md` — replaced the SecretsProvider mention in the
+     design-patterns paragraph with the Factory pattern (`create_app()`)
+   - This file — added Session 9 (the entry you are reading)
