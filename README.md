@@ -19,7 +19,8 @@ A financial transactions platform built to professional standards. Every archite
 | Package manager | pip | |
 | UI framework | React + Ant Design | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
 | Frontend delivery | React build served by FastAPI | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
-| Upload behaviour | Replace-on-upload with file history | [ADR 009](docs/decisions/009-replace-on-upload.md) |
+| Upload behaviour | Per-upload result storage; instant activate | [ADR 014](docs/decisions/014-per-upload-result-storage.md) |
+| User sessions | UUID anonymous sessions | [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md) |
 | Upload validation | Reject file on any invalid row | [ADR 011](docs/decisions/011-reject-on-defective-row.md) |
 | Container | Docker multi-stage (Node build + Python runtime) | `Dockerfile` |
 | CI | GitHub Actions | `.github/workflows/ci.yml` |
@@ -118,6 +119,34 @@ make test-integration     # integration (requires DB)
 
 ---
 
+## API documentation
+
+FastAPI generates interactive docs automatically. With the server running:
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8000/api/docs` | Swagger UI — try every endpoint in the browser |
+| `http://localhost:8000/api/redoc` | ReDoc — clean reference documentation |
+
+### Example requests
+
+```bash
+# Upload a transactions file
+curl -X POST http://localhost:8000/api/v1/upload-transactions \
+  -H "X-Session-Token: your-uuid-here" \
+  -F "file=@transactions_sample.xlsx"
+
+# List clients
+curl http://localhost:8000/api/v1/clients \
+  -H "X-Session-Token: your-uuid-here"
+
+# Get analytics
+curl http://localhost:8000/api/v1/analytics \
+  -H "X-Session-Token: your-uuid-here"
+```
+
+---
+
 ## Secrets & configuration
 
 No secrets are hardcoded. For local development, copy `.env.example` to `.env` and fill in your values — `pydantic-settings` reads it automatically.
@@ -136,13 +165,13 @@ Every non-obvious technical choice is documented in [`docs/decisions/`](docs/dec
 |---|----------|
 | [001](docs/decisions/001-python-version.md) | Python 3.12 |
 | [002](docs/decisions/002-fastapi-over-alternatives.md) | FastAPI over Flask / Django REST |
-| [003](docs/decisions/003-ruff-toolchain.md) | Ruff as unified lint + format tool |
-| [004](docs/decisions/004-sqlalchemy-core-pure-sql.md) | SQLAlchemy Core with raw SQL — superseded by ADR 010 |
+| [001](docs/decisions/001-python-version.md) | Python 3.12 |
+| [002](docs/decisions/002-fastapi-over-alternatives.md) | FastAPI over Flask / Django REST |
 | [005](docs/decisions/005-secret-manager-over-dotenv.md) | SecretsProvider protocol |
-| [006](docs/decisions/006-ty-over-mypy.md) | ty over mypy for type checking |
-| [007](docs/decisions/007-github-secrets-as-backend.md) | GitHub Actions Secrets for CI |
 | [008](docs/decisions/008-react-frontend-architecture.md) | React served as FastAPI static files |
-| [009](docs/decisions/009-replace-on-upload.md) | Replace-on-upload (idempotent ingestion) |
-| [010](docs/decisions/010-orm-switch.md) | SQLAlchemy ORM (supersedes ADR 004) |
+| [009](docs/decisions/009-replace-on-upload.md) | Replace-on-upload (historical — led to ADR 014) |
+| [010](docs/decisions/010-orm-switch.md) | SQLAlchemy ORM |
 | [011](docs/decisions/011-reject-on-defective-row.md) | Reject entire upload on any invalid row |
-| [012](docs/decisions/012-dotenv-local-development.md) | .env for local development |
+| [013](docs/decisions/013-synchronous-upload-response.md) | Synchronous (blocking) upload response |
+| [014](docs/decisions/014-per-upload-result-storage.md) | Per-upload result storage; instant activate |
+| [015](docs/decisions/015-uuid-anonymous-sessions.md) | UUID anonymous user sessions |
