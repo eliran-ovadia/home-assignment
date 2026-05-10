@@ -18,17 +18,19 @@ Before introducing any library, pattern, or architectural choice, document **why
 |---------|--------|-----|
 | Language | Python 3.12 (pinned in `.python-version`) | [ADR 001](docs/decisions/001-python-version.md) |
 | HTTP framework | FastAPI + uvicorn | [ADR 002](docs/decisions/002-fastapi-over-alternatives.md) |
-| Lint + format | Ruff | [ADR 003](docs/decisions/003-ruff-toolchain.md) |
-| Type checking | ty (Astral) | [ADR 006](docs/decisions/006-ty-over-mypy.md) |
-| Database access | SQLAlchemy ORM + Alembic migrations | [ADR 010](docs/decisions/010-orm-switch.md) supersedes [ADR 004](docs/decisions/004-sqlalchemy-core-pure-sql.md) |
+| Lint + format | Ruff | — |
+| Type checking | ty (Astral) | — |
+| Database access | SQLAlchemy ORM + Alembic migrations | [ADR 010](docs/decisions/010-orm-switch.md) |
 | Secrets (abstraction) | `SecretsProvider` protocol in `src/core/secrets.py` | [ADR 005](docs/decisions/005-secret-manager-over-dotenv.md) |
-| Local development secrets | `.env` via pydantic-settings; `.env.example` committed | [ADR 012](docs/decisions/012-dotenv-local-development.md) |
-| CI secrets | GitHub Actions Secrets → `EnvironmentSecretsProvider` | [ADR 007](docs/decisions/007-github-secrets-as-backend.md) |
+| Local development secrets | `.env` via pydantic-settings; `.env.example` committed | — |
+| CI secrets | GitHub Actions Secrets → `EnvironmentSecretsProvider` | — |
 | Package manager | pip | |
 | UI framework | Ant Design (React) | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
 | Frontend delivery | React build served by FastAPI static files | [ADR 008](docs/decisions/008-react-frontend-architecture.md) |
-| Upload behaviour | Replace-on-upload; file history in `uploads` table | [ADR 009](docs/decisions/009-replace-on-upload.md) |
+| Upload behaviour | Per-upload result storage; activate = instant flag flip | [ADR 014](docs/decisions/014-per-upload-result-storage.md) extends [ADR 009](docs/decisions/009-replace-on-upload.md) |
 | Upload validation | Reject entire file on any invalid row | [ADR 011](docs/decisions/011-reject-on-defective-row.md) |
+| Upload response | Synchronous blocking HTTP | [ADR 013](docs/decisions/013-synchronous-upload-response.md) |
+| User sessions | UUID anonymous sessions; X-Session-Token header | [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md) |
 
 ## Domain Architecture
 
@@ -51,7 +53,9 @@ tests/          # unit/ (no DB) and integration/ (requires DB)
 
 **Async model:** All routes use `async def` with `AsyncSession` (asyncpg driver). CPU-bound sections (openpyxl parsing, FIFO computation) use `await asyncio.to_thread(fn, args)` to run in a thread pool without blocking the event loop. GET routes are pure async I/O. The upload route combines async DB calls with `asyncio.to_thread` for compute steps.
 
-**Concurrency:** PostgreSQL advisory lock ensures only one upload processes at a time. Concurrent uploads receive HTTP 409.
+**Concurrency:** Per-user PostgreSQL advisory lock (`pg_try_advisory_lock(user_id)`). Different users can upload simultaneously; the same user cannot. Concurrent same-user uploads receive HTTP 409.
+
+**User isolation:** Every request carries `X-Session-Token: <uuid>`. The `get_current_user()` FastAPI dependency resolves this to a `users` row (creating one on first sight). All DB queries filter by the active `upload_id` for the current user — no user can read another user's data.
 
 ## Development Commands
 
@@ -79,13 +83,14 @@ When changing a tool or adding one, update **all** of these files. This map is t
 
 | Tool / concern | Files that must stay in sync |
 |----------------|------------------------------|
-| Type checker (ty) | `pyproject.toml` `[tool.ty]` + dev dep, `Makefile` `typecheck`, `.pre-commit-config.yaml`, `ci.yml`, `CLAUDE.md` table, `README.md` table, `docs/decisions/006` |
-| Linter / formatter (ruff) | `pyproject.toml` `[tool.ruff]` + dev dep, `Makefile` `lint`/`format`, `.pre-commit-config.yaml`, `ci.yml`, `CLAUDE.md` table, `README.md` table, `docs/decisions/003` |
+| Type checker (ty) | `pyproject.toml` `[tool.ty]` + dev dep, `Makefile` `typecheck`, `.pre-commit-config.yaml`, `ci.yml` |
+| Linter / formatter (ruff) | `pyproject.toml` `[tool.ruff]` + dev dep, `Makefile` `lint`/`format`, `.pre-commit-config.yaml`, `ci.yml` |
 | Test runner (pytest) | `pyproject.toml` `[tool.pytest.ini_options]`, `Makefile` test targets, `ci.yml` test job |
 | Database engine | `docker-compose.yml`, `ci.yml` service block, `Dockerfile` (if driver needs OS libs), relevant ADR |
 | Secrets pattern | `src/core/secrets.py`, `.env.example`, `docker-compose.yml` env notes, `docs/decisions/005`, `README.md` secrets section |
 | Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty] python-version`, `docs/decisions/001` |
 | ORM models | `src/db/models.py`, `migrations/versions/`, `docs/decisions/010` |
+| User sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (localStorage + header injection), `docs/decisions/015` |
 
 ## Secrets & Configuration
 

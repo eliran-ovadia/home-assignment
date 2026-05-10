@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Skill(claude-api)"
+      "Skill(claude-api)",
+      "Bash(.venv\\\\Scripts\\\\python -m pytest tests/unit/ -x -q)"
     ]
   }
 }
