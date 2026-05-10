@@ -294,8 +294,12 @@ Precomputed per-client values. One row per (upload, client).
 | max_portfolio_value | NUMERIC(18,6) | NOT NULL |
 | min_portfolio_value | NUMERIC(18,6) | NOT NULL |
 | value_range | NUMERIC(18,6) | NOT NULL |
+| winning_trades | INT | NULLABLE (null = no completed trades) |
+| total_trades | INT | NULLABLE (null = no completed trades) |
 
 Constraint: UNIQUE `(upload_id, client_id)`. Index: `(upload_id)`.
+
+`winning_trades` / `total_trades` are populated by the FIFO engine to support the bonus win-rate analytic. `win_rate` itself is derived in the API response (winning / total).
 
 ### Insert Order (per upload)
 
