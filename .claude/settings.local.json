@@ -13,7 +13,9 @@
       "Bash(DB_PASSWORD=test python *)",
       "Bash(DB_PASSWORD=test alembic upgrade head --sql)",
       "Bash(echo \"exit: $?\")",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(echo \"---STATUS: $? ---\")",
+      "Bash(pytest tests/unit/)"
     ]
   }
 }
