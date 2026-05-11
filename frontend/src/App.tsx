@@ -3,12 +3,11 @@
 //   - the active theme (dark or light)
 //   - a `refreshKey` that components subscribe to via prop. Bumping the key
 //     after an upload / last-viewed switch forces every child to re-fetch.
+//   - the shared `clients` list. Two children need it (the dropdown and the
+//     violations filter); fetching once here and passing as a prop avoids
+//     the duplicate `/api/v1/clients` round-trip after every refresh.
 
-import {
-  BulbFilled,
-  BulbOutlined,
-  LogoutOutlined,
-} from "@ant-design/icons";
+import { BulbFilled, BulbOutlined, LogoutOutlined } from "@ant-design/icons";
 import {
   Button,
   ConfigProvider,
@@ -18,7 +17,7 @@ import {
   theme as antdTheme,
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
-import { clearStoredEmail, getStoredEmail } from "./api/client";
+import { clearStoredEmail, getStoredEmail, listClients } from "./api/client";
 import { AnalyticsPanel } from "./components/AnalyticsPanel";
 import { ClientSelector } from "./components/ClientSelector";
 import { EmailGate } from "./components/EmailGate";
@@ -26,6 +25,7 @@ import { PositionsTable } from "./components/PositionsTable";
 import { UploadHistory } from "./components/UploadHistory";
 import { UploadSection } from "./components/UploadSection";
 import { ViolationsTable } from "./components/ViolationsTable";
+import type { ClientSummary } from "./types";
 
 const THEME_STORAGE_KEY = "lumina:theme";
 type Mode = "light" | "dark";
@@ -37,10 +37,39 @@ export function App() {
   );
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientSummary[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(THEME_STORAGE_KEY, mode);
   }, [mode]);
+
+  // Single source of truth for the client list. Re-fetches whenever the
+  // active upload changes (refreshKey) or the user signs in (email).
+  // Without this hoist, ClientSelector and ViolationsTable would each call
+  // /api/v1/clients independently on every refresh — two parallel requests
+  // with identical responses.
+  useEffect(() => {
+    if (!email) return;
+    let cancelled = false;
+    setClientsLoading(true);
+    listClients()
+      .then((data) => {
+        if (!cancelled) setClients(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn("Failed to load clients", err);
+          setClients([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setClientsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [email, refreshKey]);
 
   const bumpRefresh = useCallback(() => {
     setRefreshKey((prev) => prev + 1);
@@ -55,8 +84,7 @@ export function App() {
   };
 
   const themeConfig = {
-    algorithm:
-      mode === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    algorithm: mode === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
   };
 
   // Email gate is rendered alone — no Layout, no data components — so the
@@ -108,17 +136,15 @@ export function App() {
             <UploadSection onUploaded={bumpRefresh} />
             <UploadHistory refreshKey={refreshKey} onActivated={bumpRefresh} />
             <ClientSelector
-              refreshKey={refreshKey}
+              clients={clients}
+              loading={clientsLoading}
               value={selectedClient}
               onChange={setSelectedClient}
             />
             {selectedClient && (
-              <PositionsTable
-                clientId={selectedClient}
-                refreshKey={refreshKey}
-              />
+              <PositionsTable clientId={selectedClient} refreshKey={refreshKey} />
             )}
-            <ViolationsTable refreshKey={refreshKey} />
+            <ViolationsTable refreshKey={refreshKey} clients={clients} />
             <AnalyticsPanel refreshKey={refreshKey} />
           </Space>
         </Layout.Content>

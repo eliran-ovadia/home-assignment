@@ -18,19 +18,28 @@ type and the per-row error table independently.
 | `02_violation_sell_before_buy.xlsx` | C002 tries to sell AAPL with no prior buy | `200`, 1 × `SELL_BEFORE_BUY` (ERROR) |
 | `03_violation_day_trading.xlsx` | C001 closes 4 distinct ISINs within one 24h window | `200`, 1 × `DAY_TRADING` (FLAG) |
 | `04_violation_risk_concentration.xlsx` | C001 ends with ~91% of portfolio in AAPL | `200`, 1 × `RISK_CONCENTRATION` (WARNING) |
+| `05_violation_invalid_negative_quantity.xlsx` | One Sell row with `quantity = -50` | `200`, 1 × `INVALID_VALUE` (ERROR); row stored but excluded from FIFO |
+| `06_violation_invalid_negative_price.xlsx` | One Buy row with `price = -50` | `200`, 1 × `INVALID_VALUE` (ERROR); row stored but excluded from FIFO |
+
+**Why are 05 and 06 *valid*?** Assignment Part D: "Invalid Values: Price or
+Quantity < 0 → flag as ERROR." The check is strictly `< 0` — zero is
+permitted (free shares, promotional fills). The rule lives in the
+violations table; it does not block the upload. The transactions table
+still records the bad row (audit trail), but FIFO / analytics skip it.
 
 ## Invalid uploads — return 422, nothing saved
+
+These are *structural* failures — the file can't be parsed into well-typed
+rows at all, so there's nothing meaningful to persist.
 
 | File | What's wrong | Expected error column |
 |------|--------------|-----------------------|
 | `10_invalid_missing_column.xlsx` | `Timestamp` column dropped | "Missing required columns" (file-level, not per-row) |
-| `11_invalid_negative_quantity.xlsx` | One row with `quantity = -50` | `quantity` — "Expected a positive number" |
-| `12_invalid_zero_price.xlsx` | `price = 0` | `price` — "Expected a positive number" |
-| `13_invalid_bad_action.xlsx` | `Action = "Transfer"` | `action` — "Expected 'Buy' or 'Sell'" |
-| `14_invalid_text_in_quantity.xlsx` | `quantity = "many"` | `quantity` — "Expected a number" |
-| `15_invalid_missing_field.xlsx` | `client_id` is blank | `client_id` — "Missing required field" |
-| `16_invalid_multiple_errors.xlsx` | Four rows, four distinct errors | Per-row table with `quantity`, `action`, `price`, `quantity` (text) |
-| `17_empty_data_rows.xlsx` | Header present, no data rows | "Workbook contains a header row but no data rows" |
+| `11_invalid_bad_action.xlsx` | `Action = "Transfer"` | `action` — "Expected 'Buy' or 'Sell'" |
+| `12_invalid_text_in_quantity.xlsx` | `quantity = "many"` | `quantity` — "Expected a number" |
+| `13_invalid_missing_field.xlsx` | `client_id` is blank | `client_id` — "Missing required field" |
+| `14_invalid_multiple_errors.xlsx` | Three structural errors across distinct rows | Per-row table with `action`, `quantity` (text), `client_id` |
+| `15_empty_data_rows.xlsx` | Header present, no data rows | "Workbook contains a header row but no data rows" |
 
 ## Notes for manual demo
 

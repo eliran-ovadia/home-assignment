@@ -1,16 +1,16 @@
 // Violations table with two filter selects (type, client). Severity is
 // rendered as a colored tag — ERROR red, WARNING orange, FLAG yellow.
+//
+// `clients` is owned by App.tsx — we receive it as a prop so the
+// /api/v1/clients call isn't duplicated by ClientSelector and this
+// component both fetching it independently after each refresh.
 
 import { Card, Select, Space, Table, Tag, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { listClients, listViolations } from "../api/client";
+import { listViolations } from "../api/client";
 import type { ClientSummary, ViolationResponse } from "../types";
 
-const VIOLATION_TYPES = [
-  "SELL_BEFORE_BUY",
-  "DAY_TRADING",
-  "RISK_CONCENTRATION",
-] as const;
+const VIOLATION_TYPES = ["SELL_BEFORE_BUY", "DAY_TRADING", "RISK_CONCENTRATION"] as const;
 
 function severityTag(severity: string) {
   switch (severity) {
@@ -27,32 +27,14 @@ function severityTag(severity: string) {
 
 interface ViolationsTableProps {
   refreshKey: number;
+  clients: ClientSummary[];
 }
 
-export function ViolationsTable({ refreshKey }: ViolationsTableProps) {
+export function ViolationsTable({ refreshKey, clients }: ViolationsTableProps) {
   const [rows, setRows] = useState<ViolationResponse[]>([]);
-  const [clients, setClients] = useState<ClientSummary[]>([]);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [clientFilter, setClientFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // Refresh the client list whenever the active upload changes.
-  useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((data) => {
-        if (!cancelled) setClients(data);
-      })
-      .catch((err: unknown) => {
-        // Non-fatal — the violation table itself still works without
-        // the client dropdown being populated. Logged so the failure
-        // mode is visible in the browser console.
-        console.warn("ViolationsTable: failed to load client list", err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
 
   useEffect(() => {
     let cancelled = false;

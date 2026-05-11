@@ -58,7 +58,7 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 | D1 | Day Trading (>3 pairs in 24h → flag) | ✅ | 🔄 | `domain/violations.detect_day_trading` — per-client 24h window; 5 unit tests (threshold, outside-window, per-client, single-violation). |
 | D2 | Risk Concentration (ISIN > 50% → warning) | ✅ | 🔄 | `domain/violations.detect_risk_concentration` — 6 unit tests (above/at/below threshold, per-client, zero portfolio). |
 | D3 | Sell Before Buy → ERROR | ✅ | 🔄 | FIFO engine emits violation, skips match, no short position. Tested in `test_fifo.py`. |
-| D4 | Invalid Values (price/qty ≤ 0 → ERROR) | ✅ | 🔄 | Validator catches at ingestion; whole-file rejection (ADR 011) needs PR 4's route. |
+| D4 | Invalid Values (price/qty ≤ 0 → ERROR) | ✅ | 🔄 | `domain/violations.detect_invalid_values` — partitions rows, flags violation (severity ERROR), excludes from FIFO/analytics; row still inserted to transactions for audit. See refined ADR 011. |
 
 ---
 

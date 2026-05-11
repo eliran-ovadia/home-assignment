@@ -73,9 +73,14 @@ class RawRow:
 @dataclass(frozen=True, slots=True)
 class ValidatedRow:
     """
-    A row that passed both type and value validation. Every field is in the
-    canonical post-normalization shape: stripped strings, title-cased action,
-    `Decimal` numerics, naïve UTC `datetime`.
+    A row that passed structural validation: every field has the canonical
+    post-normalization shape (stripped strings, title-cased action, `Decimal`
+    numerics, naïve UTC `datetime`).
+
+    "Structural" only. Numeric values may still be ≤ 0 — those are flagged
+    as INVALID_VALUE violations by `detect_invalid_values` in the domain
+    layer, not rejected at parse time. Downstream consumers (FIFO,
+    analytics) receive the *eligible* subset returned by that detector.
     """
 
     row_number: int

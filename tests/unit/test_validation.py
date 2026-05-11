@@ -47,27 +47,26 @@ def test_whitespace_is_stripped_and_action_titlecased() -> None:
     assert only.action == "Buy"
 
 
-def test_quantity_zero_is_rejected() -> None:
-    valid, errors = validate_rows([_row(quantity=0)])
-    assert valid == []
-    assert len(errors) == 1
-    assert errors[0].column == "quantity"
-    assert "positive" in errors[0].reason
+def test_non_positive_quantity_passes_structural_validation() -> None:
+    """
+    Assignment Part D: `Quantity < 0` is an INVALID_VALUE violation, not a
+    structural error. The validator must let the row through so the domain
+    layer can flag it and the audit trail can record it.
+    """
+    valid, errors = validate_rows([_row(quantity=0), _row(quantity=-5)])
+    assert errors == []
+    assert len(valid) == 2
+    assert valid[0].quantity == Decimal(0)
+    assert valid[1].quantity == Decimal(-5)
 
 
-def test_quantity_negative_is_rejected() -> None:
-    _, errors = validate_rows([_row(quantity=-5)])
-    assert any(e.column == "quantity" and "positive" in e.reason for e in errors)
-
-
-def test_price_negative_is_rejected() -> None:
-    _, errors = validate_rows([_row(price=Decimal("-3.50"))])
-    assert any(e.column == "price" and "positive" in e.reason for e in errors)
-
-
-def test_price_zero_is_rejected() -> None:
-    _, errors = validate_rows([_row(price=0)])
-    assert any(e.column == "price" for e in errors)
+def test_non_positive_price_passes_structural_validation() -> None:
+    """Same as above but for price — flagged downstream, not rejected here."""
+    valid, errors = validate_rows([_row(price=0), _row(price=Decimal("-3.50"))])
+    assert errors == []
+    assert len(valid) == 2
+    assert valid[0].price == Decimal(0)
+    assert valid[1].price == Decimal("-3.50")
 
 
 def test_string_in_quantity_column_is_rejected() -> None:
@@ -113,23 +112,23 @@ def test_bool_in_quantity_is_rejected() -> None:
 
 
 def test_row_number_propagates_to_error() -> None:
-    _, errors = validate_rows([_row(row_number=42, quantity=-1)])
+    _, errors = validate_rows([_row(row_number=42, quantity="abc")])
     assert errors[0].row_number == 42
 
 
 def test_transaction_id_propagates_to_error() -> None:
-    _, errors = validate_rows([_row(transaction_id="TXN999", quantity=-1)])
+    _, errors = validate_rows([_row(transaction_id="TXN999", quantity="abc")])
     assert errors[0].transaction_id == "TXN999"
 
 
 def test_one_row_can_yield_multiple_errors() -> None:
-    _, errors = validate_rows([_row(quantity=-1, price=-2, action="HOLD")])
+    _, errors = validate_rows([_row(quantity="abc", price="xyz", action="HOLD")])
     columns = {e.column for e in errors}
     assert {"quantity", "price", "action"}.issubset(columns)
 
 
 def test_mixed_valid_and_invalid_rows() -> None:
-    valid, errors = validate_rows([_row(row_number=2), _row(row_number=3, quantity=-1)])
+    valid, errors = validate_rows([_row(row_number=2), _row(row_number=3, quantity="abc")])
     assert len(valid) == 1
     assert valid[0].row_number == 2
     assert len(errors) == 1

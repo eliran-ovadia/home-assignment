@@ -6,12 +6,18 @@ import datetime
 from decimal import Decimal
 
 from src.domain.models import (
+    SEVERITY_ERROR,
     VIOLATION_DAY_TRADING,
+    VIOLATION_INVALID_VALUE,
     VIOLATION_RISK_CONCENTRATION,
     Position,
     ValidatedRow,
 )
-from src.domain.violations import detect_day_trading, detect_risk_concentration
+from src.domain.violations import (
+    detect_day_trading,
+    detect_invalid_values,
+    detect_risk_concentration,
+)
 
 
 def _tx(
@@ -33,6 +39,77 @@ def _tx(
         price=Decimal(100),
         timestamp=datetime.datetime(2026, 1, day, hour, 0),
     )
+
+
+# ── Invalid-value detector ───────────────────────────────────────────────────
+
+
+def _tx_with(
+    row_number: int,
+    *,
+    quantity: Decimal | int = 10,
+    price: Decimal | int = 100,
+    client_id: str = "C001",
+) -> ValidatedRow:
+    return ValidatedRow(
+        row_number=row_number,
+        transaction_id=f"TXN{row_number:03d}",
+        client_id=client_id,
+        isin="ISIN_A",
+        action="Buy",
+        quantity=Decimal(quantity),
+        price=Decimal(price),
+        timestamp=datetime.datetime(2026, 1, 1, 9, 0),
+    )
+
+
+def test_invalid_values_negative_price_flagged_and_row_excluded() -> None:
+    rows = [_tx_with(1), _tx_with(2, price=-10)]
+    eligible, violations = detect_invalid_values(rows)
+    assert [r.row_number for r in eligible] == [1]
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.violation_type == VIOLATION_INVALID_VALUE
+    assert v.severity == SEVERITY_ERROR
+    assert v.transaction_id == "TXN002"
+    assert "price=-10" in v.description
+
+
+def test_invalid_values_zero_is_allowed() -> None:
+    """Assignment rule is strictly `< 0`; zero is permitted (e.g. free shares)."""
+    eligible, violations = detect_invalid_values([_tx_with(1, quantity=0, price=0)])
+    assert len(eligible) == 1
+    assert violations == []
+
+
+def test_invalid_values_negative_quantity_flagged_and_row_excluded() -> None:
+    rows = [_tx_with(1, quantity=-5)]
+    eligible, violations = detect_invalid_values(rows)
+    assert eligible == []
+    assert len(violations) == 1
+    assert "quantity=-5" in violations[0].description
+
+
+def test_invalid_values_both_fields_bad_yields_single_violation() -> None:
+    """One row with two bad fields emits one violation listing both — not two."""
+    rows = [_tx_with(1, quantity=-1, price=-2)]
+    _, violations = detect_invalid_values(rows)
+    assert len(violations) == 1
+    desc = violations[0].description
+    assert "quantity=-1" in desc and "price=-2" in desc
+
+
+def test_invalid_values_preserves_order_for_eligible_rows() -> None:
+    rows = [_tx_with(1), _tx_with(2, quantity=-3), _tx_with(3), _tx_with(4, price=-1)]
+    eligible, violations = detect_invalid_values(rows)
+    assert [r.row_number for r in eligible] == [1, 3]
+    assert [v.transaction_id for v in violations] == ["TXN002", "TXN004"]
+
+
+def test_invalid_values_empty_input_returns_empty_lists() -> None:
+    eligible, violations = detect_invalid_values([])
+    assert eligible == []
+    assert violations == []
 
 
 # ── Day-trading detector ──────────────────────────────────────────────────────

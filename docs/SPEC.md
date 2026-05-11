@@ -286,10 +286,18 @@ Indexes: `(upload_id, client_id)`, `(upload_id, violation_type)`.
 
 | violation_type | severity | Transaction inserted? | Processing continues? |
 |---|---|---|---|
-| INVALID_VALUE | ERROR | No | No — entire upload rejected (ADR 011) |
+| INVALID_VALUE | ERROR | Yes — recorded for audit | Yes — row excluded from FIFO and analytics (avoids garbage math); upload itself succeeds (ADR 011) |
 | SELL_BEFORE_BUY | ERROR | Yes | Yes — FIFO match skipped, no short position |
 | DAY_TRADING | FLAG | Yes | Yes |
 | RISK_CONCENTRATION | WARNING | Yes | Yes |
+
+Note: structural problems (missing column, non-numeric value in a numeric
+column, action not in `{Buy, Sell}`, missing required field, non-datetime
+timestamp) still reject the whole file with `422` — those rows can't be
+parsed into the canonical types the rest of the pipeline needs. The
+**INVALID_VALUE** row above is specifically about *non-positive values* in
+otherwise well-formed numeric cells, which the assignment's Part D
+classifies as a violation rather than a parse failure.
 
 ### `client_analytics`
 
@@ -515,18 +523,26 @@ Sets the current user's `last_viewed_upload_id` preference. The pipeline does no
 
 ### 5.1 Validation (`ingestion/validator.py`)
 
-Applied by streaming through the entire file before any DB write. If `invalid_rows` is non-empty → HTTP 422, nothing written.
+Applied by streaming through the entire file before any DB write. The
+validator checks **structural** rules only — type, shape, required-field
+presence, allowed action vocabulary. If `invalid_rows` is non-empty →
+HTTP 422, nothing written.
 
 | Rule | Condition | Error |
 |------|-----------|-------|
-| Positive quantity | `quantity > 0` | "Expected a positive number" |
-| Positive price | `price > 0` | "Expected a positive number" |
 | Valid action | `action in {'Buy', 'Sell'}` | "Expected 'Buy' or 'Sell'" |
-| Numeric types | quantity and price must be numeric | "Expected a number, got: '{value}'" |
+| Numeric types | quantity and price are numeric, finite | "Expected a number, got: '{value}'" |
 | Required fields | all 7 columns present and non-null | "Missing required field: {field}" |
 | Expected columns | all 7 headers must exist | HTTP 422 before row iteration |
 
 Expected columns: `ClientId`, `TransactionId`, `ISIN`, `Action`, `Quantity`, `Price`, `Timestamp`.
+
+**Value rules are *not* in this table.** Per the assignment's Part D matrix,
+non-positive quantity or price is an INVALID_VALUE *business-rule violation*
+(severity ERROR), not a structural error. Those rows pass the validator,
+land in the transactions table for audit, and are flagged by
+`detect_invalid_values` in `domain/violations.py` — see §5.2. The upload
+itself succeeds.
 
 Normalisation applied before validation:
 - Strip whitespace from all string fields
@@ -696,12 +712,15 @@ App
 - 3 round-trips in 24h → not flagged
 - ISIN at 60% of portfolio → RISK_CONCENTRATION flagged
 - ISIN at 40% → not flagged
+- `quantity = 0` → INVALID_VALUE flagged, row excluded from FIFO
+- `price = -5` → INVALID_VALUE flagged, row excluded from FIFO
+- Row with both `quantity ≤ 0` AND `price ≤ 0` → single violation listing both
 
-**test_validation.py**
-- `quantity = 0` → INVALID_VALUE, upload rejected
-- `price = -5` → INVALID_VALUE, upload rejected
-- `action = "HOLD"` → INVALID_VALUE, upload rejected
-- String in quantity column → INVALID_VALUE, upload rejected
+**test_validation.py** (structural rules only)
+- `action = "HOLD"` → upload rejected (422)
+- String in quantity column → upload rejected (422)
+- Missing required field → upload rejected (422)
+- Non-positive quantity/price → **passes** validation (handled in test_violations)
 - Valid row → passes through unchanged
 
 ### Integration Tests (requires DB)

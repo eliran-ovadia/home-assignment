@@ -754,4 +754,52 @@ A: Root cause: pyproject.toml line 3, build-backend =
    include `pip install -e ".[dev]"` from a clean venv as a verification
    step.
 
+────────────────────────────────────────────────────────────────────────────────
+SESSION 12 — POST-SUBMISSION: INVALID_VALUE MIS-CLASSIFIED FROM DAY ONE
+────────────────────────────────────────────────────────────────────────────────
+
+Q: I uploaded sample 12_invalid_zero_price.xlsx and the app refused it.
+   But the assignment says "Invalid Values: Price or Quantity < 0 →
+   flag as ERROR" — those are violations we add to the violations table,
+   not a reason to reject the upload. By the way, do we validate at the
+   backend or the frontend?
+
+A: You're right, and this is a real spec/assignment mismatch the project
+   carried from the start. ADR 011 ("reject entire upload on any invalid
+   row") and SPEC §3 both classified INVALID_VALUE as a 422 reason — but
+   the assignment's Part D explicitly lists it alongside DAY_TRADING and
+   RISK_CONCENTRATION as a *flaggable* violation. I misread Part D when
+   drafting the spec; the user caught it by uploading a sample.
+
+   Fix: split structural validation (still rejects) from value validation
+   (now flags). New `detect_invalid_values(rows) -> (eligible, violations)`
+   in domain/violations.py partitions rows: eligible flow goes to FIFO /
+   analytics, the offending row still lands in `transactions` for audit,
+   and one INVALID_VALUE violation (severity ERROR) per bad row joins the
+   violations table. Upload returns 200.
+
+   Validation location: backend. The frontend has UX-only checks (`.xlsx`
+   filename in UploadSection, email format in EmailGate). Anyone can
+   bypass those with curl/Postman, so the API is the source of truth.
+
+   Files touched: validator.py (dropped <=0 check), violations.py
+   (added detector), routes/upload.py (wires it in), SPEC §3 + §5.1,
+   ADR 011 (refined — two-tier rule), CHECKLIST D4, samples (11/12 →
+   05/06 moved into the "valid + violation" group).
+
+Q: Make sure the check is strictly `< 0` and not `<= 0`. The assignment
+   says "< 0" so zero should be allowed (free shares, promotional fills).
+
+A: Was implementing `<= 0` — caught it. Changed to `< 0` in
+   detect_invalid_values. Renamed sample 06 from "zero_price" to
+   "negative_price" (price = -50). Updated two unit tests and the
+   integration test that used price=0 as the trigger. Added a new test
+   `test_invalid_values_zero_is_allowed` so the boundary is locked in.
+
+   Lesson recorded in AI_USAGE.md: when the spec is derived from an
+   assignment brief, treat the brief's wording as the ground truth and
+   the spec as a *translation*. Mis-translations need a second pass with
+   the brief open side-by-side. The ≤/< distinction is exactly the kind
+   of slip a quick re-read of the original source catches.
+
 

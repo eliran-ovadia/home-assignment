@@ -182,7 +182,7 @@ Every non-obvious technical choice is documented in [`docs/decisions/`](docs/dec
 | [008](docs/decisions/008-react-frontend-architecture.md) | React served as FastAPI static files |
 | [009](docs/decisions/009-replace-on-upload.md) | Replace-on-upload (historical — led to ADR 014) |
 | [010](docs/decisions/010-orm-switch.md) | SQLAlchemy ORM |
-| [011](docs/decisions/011-reject-on-defective-row.md) | Reject entire upload on any invalid row |
+| [011](docs/decisions/011-reject-on-defective-row.md) | Reject upload on structural defects; flag value defects as INVALID_VALUE |
 | [013](docs/decisions/013-synchronous-upload-response.md) | Synchronous (blocking) upload response |
 | [014](docs/decisions/014-per-upload-result-storage.md) | Per-upload result storage; instant activate |
 | [015](docs/decisions/015-uuid-anonymous-sessions.md) | UUID anonymous user sessions |

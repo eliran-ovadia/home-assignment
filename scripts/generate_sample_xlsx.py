@@ -11,11 +11,14 @@ files are also checked in (small, binary, but stable).
 
 File naming
 -----------
-    01-04   Valid uploads — distinguished by which business-rule violations
+    01-06   Valid uploads — distinguished by which business-rule violations
             they intentionally trigger (none / SELL_BEFORE_BUY / DAY_TRADING /
-            RISK_CONCENTRATION).
-    10-17   Invalid uploads — every row-level validation error in SPEC §5.1,
-            plus structural problems (missing column, empty body).
+            RISK_CONCENTRATION / INVALID_VALUE × 2).
+    10-15   Invalid uploads — structural problems that still reject the file
+            (missing column, bad action, non-numeric, missing field, mixed,
+            empty body). Non-positive quantity/price is *not* in this group —
+            per the assignment's Part D rule matrix it surfaces as an
+            INVALID_VALUE violation on a successful upload.
 
 The numbers (01- vs 10-) keep valid and invalid files visually grouped in
 file managers and IDE trees.
@@ -110,8 +113,30 @@ _build(
     ],
 )
 
+# 05 — Triggers INVALID_VALUE: a Sell row with negative quantity. The file
+# still uploads — assignment Part D classifies non-positive qty/price as a
+# violation (severity ERROR), not as a reason to reject the upload. The bad
+# row lands in the transactions table for audit but is skipped from FIFO,
+# so no bogus position appears.
+_build(
+    "05_violation_invalid_negative_quantity.xlsx",
+    [
+        ["C001", "TXN001", "US0378331005", "Buy",  100, 150.00, _ts(1)],
+        ["C001", "TXN002", "US0378331005", "Sell", -50, 160.00, _ts(2)],   # ← qty < 0
+    ],
+)
 
-# ── Invalid uploads (validation errors → 422, nothing saved) ─────────────────
+# 06 — Triggers INVALID_VALUE: a Buy row with negative price. Same handling as 05.
+# (Rule is strictly `< 0` per assignment Part D, so 0 is permitted; this uses -50.)
+_build(
+    "06_violation_invalid_negative_price.xlsx",
+    [
+        ["C001", "TXN001", "US0378331005", "Buy", 100, -50.00, _ts(1)],
+    ],
+)
+
+
+# ── Invalid uploads (structural validation errors → 422, nothing saved) ──────
 
 # 10 — Missing a required column entirely (Timestamp).
 _build(
@@ -122,61 +147,44 @@ _build(
     header=["ClientId", "TransactionId", "ISIN", "Action", "Quantity", "Price"],
 )
 
-# 11 — Negative quantity on a Sell row.
+# 11 — Action value outside the {Buy, Sell} domain.
 _build(
-    "11_invalid_negative_quantity.xlsx",
-    [
-        ["C001", "TXN001", "US0378331005", "Buy",  100, 150.00, _ts(1)],
-        ["C001", "TXN002", "US0378331005", "Sell", -50, 160.00, _ts(2)],   # ← qty < 0
-    ],
-)
-
-# 12 — Zero price (spec requires strictly > 0).
-_build(
-    "12_invalid_zero_price.xlsx",
-    [
-        ["C001", "TXN001", "US0378331005", "Buy", 100, 0.00, _ts(1)],
-    ],
-)
-
-# 13 — Action value outside the {Buy, Sell} domain.
-_build(
-    "13_invalid_bad_action.xlsx",
+    "11_invalid_bad_action.xlsx",
     [
         ["C001", "TXN001", "US0378331005", "Transfer", 100, 150.00, _ts(1)],
     ],
 )
 
-# 14 — Non-numeric value in the Quantity column (a string).
+# 12 — Non-numeric value in the Quantity column (a string).
 _build(
-    "14_invalid_text_in_quantity.xlsx",
+    "12_invalid_text_in_quantity.xlsx",
     [
         ["C001", "TXN001", "US0378331005", "Buy", "many", 150.00, _ts(1)],
     ],
 )
 
-# 15 — Missing required field (client_id is blank on a single row).
+# 13 — Missing required field (client_id is blank on a single row).
 _build(
-    "15_invalid_missing_field.xlsx",
+    "13_invalid_missing_field.xlsx",
     [
         [None, "TXN001", "US0378331005", "Buy", 100, 150.00, _ts(1)],
     ],
 )
 
-# 16 — Multiple rows, each with a different error. Lets you see the per-row
-# error table in the UI populated with several distinct reasons at once.
+# 14 — Multiple rows, each with a different *structural* error. (Non-positive
+# qty/price is intentionally NOT included here — those are INVALID_VALUE
+# violations, not upload-blocking errors.)
 _build(
-    "16_invalid_multiple_errors.xlsx",
+    "14_invalid_multiple_errors.xlsx",
     [
         ["C001", "TXN001", "US0378331005", "Buy",   100,    150.00, _ts(1)],   # OK
-        ["C002", "TXN002", "US0378331005", "Sell",  -10,    160.00, _ts(2)],   # neg qty
-        ["C003", "TXN003", "US5949181045", "HOLD",  50,     300.00, _ts(2)],   # bad action
-        ["C004", "TXN004", "US02079K3059", "Buy",   20,     -100.00, _ts(3)],  # neg price
-        ["C005", "TXN005", "US88160R1014", "Buy",   "ten",  250.00, _ts(4)],   # qty is text
+        ["C002", "TXN002", "US0378331005", "HOLD",  50,     160.00, _ts(2)],   # bad action
+        ["C003", "TXN003", "US5949181045", "Buy",   "ten",  300.00, _ts(2)],   # qty is text
+        [None,   "TXN004", "US02079K3059", "Buy",   20,     100.00, _ts(3)],   # missing client_id
     ],
 )
 
-# 17 — Header row only, no data rows.
-_build("17_empty_data_rows.xlsx", [])
+# 15 — Header row only, no data rows.
+_build("15_empty_data_rows.xlsx", [])
 
 print(f"\nWrote {len(list(OUT_DIR.glob('*.xlsx')))} files to {OUT_DIR.relative_to(Path.cwd())}/")
