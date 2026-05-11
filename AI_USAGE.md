@@ -6,6 +6,21 @@ reviewer or by an automated agent reading on the reviewer's behalf.
 
 ---
 
+## Assignment Requirement Coverage
+
+The assignment brief lists five required items for this file. Each one
+maps to a section below:
+
+| Required item | Where in this file |
+|---|---|
+| AI tools used | [AI Tools Used](#ai-tools-used) |
+| Example prompts | [Example Prompts](#example-prompts) — plus full conversation log in [`docs/example_prompts.txt`](docs/example_prompts.txt) |
+| What code was generated | [What Code Was Generated](#what-code-was-generated) |
+| What you modified | [What I Modified](#what-i-modified) |
+| Mistakes and how you fixed them | [Who Caught What](#who-caught-what) — split into human-found and CI-found |
+
+---
+
 ## Summary for Reviewers
 
 - **Spec-first development.** Architecture, schema, API contract, FIFO
@@ -28,13 +43,86 @@ reviewer or by an automated agent reading on the reviewer's behalf.
 
 ---
 
-## Tools Used
+## AI Tools Used
 
 | Tool | Purpose |
 |---|---|
 | Claude (claude.ai web + Claude Code CLI) | Architecture design, specification writing, code generation, conversational review |
 | Claude PR-Review Agent (CI workflow) | Automated review of every diff against `main` — correctness, security, style |
 | Claude Design (claude.ai artifact mode) | Frontend wireframe and visual specification |
+
+---
+
+## Example Prompts
+
+Representative prompts from the build, with the outcome each one
+produced. The full conversation log (every session, with the Claude
+responses) is in [`docs/example_prompts.txt`](docs/example_prompts.txt).
+
+**Design phase — set the spec-first discipline:**
+
+> "I will now share with you the assignment itself. We will take our
+> time to talk about the whole architecture. I want us to move one step
+> at a time, talking about every task to see that we agree on the best
+> way to implement it with the whole project in context."
+
+*Outcome:* surfaced three real conflicts between assignment and
+existing scaffolding (SQLite vs Postgres, ORM, React) and the
+unrealized-P&L "last price" ambiguity. Locked in spec-first as the
+working model.
+
+**Design phase — push back on scope:**
+
+> "Don't add ProcessPoolExecutor parallel FIFO to the spec — that's
+> scope creep for a junior assignment."
+
+*Outcome:* removed from `SPEC.md`; deferred to `PRODUCTION_ROADMAP.md`.
+
+**Implementation phase — enforce control:**
+
+> "Wait, who asked you to start building the project?"
+
+*Outcome:* Claude had begun generating implementation code unprompted.
+Stopped it, reverted every file, then built `docs/IMPLEMENTATION_PLAN.md`
+together — 7 PRs in dependency order, each gated on the previous.
+
+**Implementation phase — readability over completeness:**
+
+> "These functions are too long, refactor them. Be honest about whether
+> they actually need it."
+
+*Outcome:* refactored `parse_workbook`, `run_fifo`,
+`compute_client_analytics`, and `validator.py`; pushed back on
+`detect_risk_concentration` (already at the right granularity).
+
+**Post-submission — caught the biggest mistake:**
+
+> "I attempted to upload file 12 and the app refused it because we have
+> a row where price is 0. This is not a validation error that prevents
+> upload — the assignment says 'Invalid Values → flag as ERROR'."
+
+*Outcome:* split structural vs value validation. `INVALID_VALUE`
+became a flagged violation rather than a 422 cause. SPEC, ADR 011,
+samples, and tests all updated. See [Post-Submission Discoveries](#post-submission-discoveries).
+
+**Post-submission — caught the second slip:**
+
+> "Make sure the check is `< 0` and not `<= 0`. The assignment says
+> strictly less than."
+
+*Outcome:* changed both comparisons to `< 0`; renamed sample 06; added
+`test_invalid_values_zero_is_allowed`.
+
+**Spec-misalignment review (multiple turns):**
+
+> "The PR agent says we're out of spec, but I know for sure we're not.
+> Can I send you the PR agent's critique and you'll fix the spec?"
+
+*Outcome:* triaged each agent claim individually. Two were doc-drift
+(spec stale, code correct) and got the spec updated. One was a real
+frontend bug (`INVALID_VALUE` missing from the violations-filter
+dropdown) and got fixed in code. Two were correct positive
+observations — no action needed.
 
 ---
 
@@ -195,6 +283,49 @@ PR 7: Docker + CI finalisation (needs 5 + 6) ───────────�
 | 3 (readability) | same | User-driven refactor — `parse_workbook`, `run_fifo`, `compute_client_analytics` all decomposed; validator went 267→174 lines | I evaluated each candidate honestly: refactored what needed it, left `detect_risk_concentration` alone because it was already at the right granularity |
 | 4 | `feat/api-layer` | `pydantic[email]` runtime dependency missing; leftover speculative imports | Pre-existing CI build-backend typo caught and fixed across the board |
 | 5–7 | tests, frontend, Docker/CI | Thin integration over already-tested layers; no significant bugs | — |
+
+### What Code Was Generated
+
+Claude generated the first draft of essentially every file in the
+repository. Listed by directory:
+
+| Area | Files | Generated by |
+|---|---|---|
+| Backend application | `src/api/**`, `src/core/**`, `src/db/**`, `src/domain/**`, `src/ingestion/**` | Claude, PR by PR |
+| Database migrations | `migrations/versions/0001_initial_schema.py`, `migrations/env.py` | Claude (alembic --autogenerate seeded; reviewed line by line) |
+| Tests | `tests/unit/**` (53 tests), `tests/integration/**` (24 tests), `tests/conftest.py` | Claude |
+| Frontend | `frontend/src/**` (App, 7 components, API client, types) | Claude, scaffolded from the Claude Design wireframe |
+| Infrastructure | `Dockerfile` (3-stage), `docker-compose.yml` (db + migrate + app), `.github/workflows/ci.yml` | Claude |
+| Build configuration | `pyproject.toml`, `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json` | Claude |
+| Documentation | `docs/SPEC.md`, all ADRs in `docs/decisions/`, `docs/API_EXAMPLES.md`, `docs/ARCHITECTURE.md`, `samples/README.md` | Claude, drafted in conversation |
+| Sample data | `scripts/generate_sample_xlsx.py` + the 12 `.xlsx` files it produces | Claude |
+| Postman collection | `postman/Lumina_Capital.postman_collection.json` | Claude |
+
+The assignment brief, the `.env`, and a handful of IDE config files
+(`.idea/`, `.vscode/`) are the only things I authored from scratch.
+Everything that runs the system was AI-generated.
+
+### What I Modified
+
+What I did was *direct* the generation and then triage / correct the
+output. The substantive modifications:
+
+| Modification | Why | What changed |
+|---|---|---|
+| **Identity-model pivot** | UUID-in-localStorage didn't follow users across devices and isolated data we actually wanted shared | Migrated to email-as-identity + shared upload pool. ADR 016 supersedes ADR 015. Schema, repositories, and frontend storage layer all touched |
+| **`INVALID_VALUE` re-classification** (the big one) | Spec misread Part D — rejected files that should have been flagged | Two-tier validation split. `detect_invalid_values` added; validator stopped enforcing positivity; SPEC §3 / §5.1 / ADR 011 / samples / tests all rewritten |
+| **`<= 0` → `< 0`** | Assignment says strictly less than; zero is allowed | Both comparisons, sample 06 renamed (`zero_price` → `negative_price`), `test_invalid_values_zero_is_allowed` added |
+| **Frontend duplicate-fetch fix** | `ClientSelector` and `ViolationsTable` were each calling `/clients` on every refresh | Hoisted `clients` state to `App.tsx`; children receive it as a prop |
+| **`INVALID_VALUE` in violations filter** | Filter dropdown didn't include the new violation type after the re-classification | Added to `VIOLATION_TYPES` constant in `ViolationsTable.tsx` |
+| **Build-backend typo** | CI's `lint` and `test` jobs had been failing for the entire project — `setuptools.backends.legacy:build` is not a real module | One-line fix to `setuptools.build_meta`; re-enabled the `needs:` gate on the review job |
+| **Removed `Makefile` + `.pre-commit-config.yaml`** | They added complexity for tools that didn't fit my Windows workflow | Deleted both; documented `docker compose up --build` as the single canonical entrypoint |
+| **Docker entrypoint → separate `migrate` service** | An `entrypoint.sh` that ran `alembic upgrade head` then `uvicorn` mixed responsibilities | Split into a one-shot `migrate` compose service gated behind the db healthcheck; `app` waits on `service_completed_successfully` |
+| **`PRODUCTION_ROADMAP.md` trim** | The original had 11 items, several stale or trivial | Cut to the 5 actually-major upgrades; updated cross-references in SPEC.md and ADRs |
+| **`README.md` rewrite** | Original was 180+ lines with ADR tables, curl examples, architecture diagrams — too dense for an entry-point doc | Cut to ~60 lines: overview, setup, run backend, run frontend, run tests. Pointed to detailed docs |
+| **`AI_USAGE.md` refactor for AI scanning** | The narrative version was hard for an automated agent to extract from | Restructured: TL;DR up top, "Who Caught What" tables, per-PR triage, explicit Assignment Requirement Coverage map |
+| **`docs/SPEC.md` §0 + ADR 016** | After the identity pivot, the security model was unclear without explicit deployment context | Added "Deployment Context — read this first" as §0; ADR 016 documents the email-as-identity trust model |
+
+---
 
 ### Readability refactor (PR 3)
 
