@@ -114,9 +114,9 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 |---|-------------|------|------|-------|
 | H1 | At least 1 API endpoint test | ✅ | ⬜ | Integration tests land in PR 5. |
 | H2 | At least 2 business logic tests | ✅ | ✅ | **PR 3 ships 37 unit tests across 3 files** (`test_fifo.py`, `test_violations.py`, `test_validation.py`) — well past the 2-test bar. |
-| H3 | Tests runnable via simple command | ✅ | ✅ | `make test-unit` runs 37 tests in <0.1s, no warnings. `make test` will enforce 80% gate once PR 5's integration tests bring DB coverage up. |
+| H3 | Tests runnable via simple command | ✅ | ✅ | `pytest tests/unit/` runs 37 tests in <0.1s, no warnings. `pytest --cov-fail-under=80` runs the full suite + coverage gate (what CI uses). |
 | — | Edge cases (BONUS) | ✅ | ✅ | Partial sells, oversells, empty queues, FIFO ordering, multi-client independence, tz-aware timestamp normalisation, bool-as-quantity guard — all covered. |
-| — | Improved coverage (BONUS) | ✅ | 🔄 | 80% gate moved from `pyproject.toml` `addopts` to `make test` only, so unit-only runs don't fail it. Threshold will be re-validated end-to-end in PR 5. |
+| — | Improved coverage (BONUS) | ✅ | ✅ | 80% gate is passed explicitly in CI's integration job (`pytest --cov-fail-under=80`); unit-only runs don't enforce it. PR 5's full suite clears 87% coverage. |
 
 ---
 
@@ -127,10 +127,10 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 | S1 | Full source code | ✅ | ⬜ | — |
 | S2 | requirements.txt | ✅ | ✅ | File exists with all runtime deps |
 | S3 | README.md — project overview | ✅ | ✅ | Done |
-| S4 | README.md — setup instructions | ✅ | ✅ | `make install`, `.env.example` → `.env` |
+| S4 | README.md — setup instructions | ✅ | ✅ | `pip install -e ".[dev]"` + `cd frontend && npm install` + `.env.example` → `.env` |
 | S5 | README.md — how to run backend | ✅ | ✅ | `uvicorn` command documented |
 | S6 | README.md — how to run frontend | ✅ | ✅ | `npm run dev` documented |
-| S7 | README.md — how to run tests | ✅ | ✅ | `make test` documented |
+| S7 | README.md — how to run tests | ✅ | ✅ | `pytest --cov-fail-under=80` documented |
 | S8 | AI_USAGE.md | ✅ | 🔄 | Phase 1 fully documented; Phase 2 filled in as we implement |
 | — | Dockerfile / docker-compose (BONUS) | ✅ | ⬜ | Dockerfile exists but not finalized (PR 7) |
 | — | Example API requests (BONUS) | ✅ | ✅ | curl examples + Swagger link in README |

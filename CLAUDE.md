@@ -59,21 +59,30 @@ tests/          # unit/ (no DB) and integration/ (requires DB)
 ## Development Commands
 
 ```bash
-make install                          # pip install -e ".[dev]" + pre-commit install
-make check                            # ruff lint + ty type-check
-make test                             # full test suite with coverage
-make test-unit                        # unit tests only (no DB)
-make test-integration                 # integration tests (requires DB)
-make dev                              # docker compose up --build
-make dev-db                           # start only postgres
-make migrate                          # alembic upgrade head
-make migration name="describe_change" # generate new migration
-make clean                            # remove all caches
+# One-time setup
+pip install -e ".[dev]"               # backend + dev tools (ruff, ty, pytest)
+cd frontend && npm install            # frontend dependencies
 
-# Frontend (development only — production build is handled by Docker)
-cd frontend && npm install            # install frontend dependencies
-cd frontend && npm run dev            # Vite dev server (proxies /api to FastAPI)
-cd frontend && npm run build          # build to frontend/dist/
+# Quality checks
+ruff check .                          # lint
+ruff format .                         # format
+ty check src/                         # type-check
+
+# Tests
+pytest tests/unit/                    # unit tests only (no DB)
+pytest tests/integration/             # integration tests (requires DB)
+pytest --cov-fail-under=80            # full suite + 80% coverage gate (what CI runs)
+
+# Running locally
+docker compose up --build             # full stack — UI + API + DB on :8000
+docker compose up db -d               # only Postgres (for local uvicorn iteration)
+uvicorn src.api.app:app --reload      # backend with hot reload (DB must be reachable)
+cd frontend && npm run dev            # Vite dev server (proxies /api to FastAPI on :8000)
+cd frontend && npm run build          # production bundle → frontend/dist/
+
+# Migrations
+alembic upgrade head                  # apply pending migrations
+alembic revision --autogenerate -m "describe_the_change"
 ```
 
 ## Infrastructure Map
@@ -82,15 +91,15 @@ When changing a tool or adding one, update **all** of these files. This map is t
 
 | Tool / concern | Files that must stay in sync |
 |----------------|------------------------------|
-| Type checker (ty) | `pyproject.toml` `[tool.ty]` + dev dep, `Makefile` `typecheck`, `.pre-commit-config.yaml`, `ci.yml` |
-| Linter / formatter (ruff) | `pyproject.toml` `[tool.ruff]` + dev dep, `Makefile` `lint`/`format`, `.pre-commit-config.yaml`, `ci.yml` |
-| Test runner (pytest) | `pyproject.toml` `[tool.pytest.ini_options]`, `Makefile` test targets, `ci.yml` test job |
+| Type checker (ty) | `pyproject.toml` `[tool.ty.environment]` + dev dep, `ci.yml` lint job |
+| Linter / formatter (ruff) | `pyproject.toml` `[tool.ruff]` + dev dep, `ci.yml` lint job |
+| Test runner (pytest) | `pyproject.toml` `[tool.pytest.ini_options]`, `ci.yml` test + integration jobs |
 | Database engine | `docker-compose.yml`, `ci.yml` service block, `Dockerfile` (if driver needs OS libs), relevant ADR |
 | Configuration | `src/core/config.py` (`Settings`), `.env.example`, `docker-compose.yml` env block, `README.md` setup section |
 | Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty.environment] python-version`, `docs/decisions/001` |
 | ORM models | `src/db/models.py`, `migrations/versions/`, `docs/decisions/010` |
 | Identity / sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (email-in-localStorage + header injection), `docs/decisions/016`, `docs/SPEC.md` §0 |
-| Frontend (Node / npm) | `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`, `Makefile` `install` target (`npm install`), `Dockerfile` Stage 1 (Node build), `README.md` setup section, `.gitignore` (`frontend/node_modules`, `frontend/dist`, `frontend/.vite`) |
+| Frontend (Node / npm) | `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`, `Dockerfile` Stage 1 (Node build), `README.md` setup section, `.gitignore` (`frontend/node_modules`, `frontend/dist`, `frontend/.vite`) |
 
 ## Configuration & Secrets
 

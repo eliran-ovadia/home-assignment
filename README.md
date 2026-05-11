@@ -56,38 +56,46 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full technical specification: databas
 ## Setup
 
 ```bash
-# 1. Install both backend and frontend dependencies + pre-commit hooks
-make install
+# 1. Install backend dependencies (only needed if running locally without Docker)
+pip install -e ".[dev]"
+cd frontend && npm install && cd ..
 
 # 2. Configure environment
 cp .env.example .env
 # Edit .env and set DB_PASSWORD (Docker Compose reads .env automatically)
 
 # 3. Start the full environment (app + database, three-stage Docker build)
-make dev
+docker compose up --build
 # → App + UI at http://localhost:8000/
 # → Swagger at  http://localhost:8000/api/docs
 ```
 
 First boot pulls the `node:20-alpine` + `python:3.12-slim` + `postgres:16-alpine`
 base images and runs `npm install` + `npm run build` + `pip install` once;
-subsequent boots reuse the cached image layers. The `app` service won't
-start until Postgres reports healthy, and its entrypoint runs
-`alembic upgrade head` before launching uvicorn — no manual migration step.
+subsequent boots reuse the cached image layers. Migrations are a one-shot
+`migrate` service that runs `alembic upgrade head` after the DB reports
+healthy; the `app` service depends on it with
+`service_completed_successfully` so the API can never boot against an
+unmigrated schema. No manual migration step.
 
 ---
 
 ## Development commands
 
 ```bash
-make check                          # ruff lint + ty type-check
-make test                           # full test suite with coverage report
-make test-unit                      # unit tests — no database needed
-make test-integration               # integration tests — requires running DB
-make migrate                        # apply all pending Alembic migrations
-make migration name="add_uploads"   # generate a new migration file
-make format                         # auto-format with ruff
-make clean                          # remove all caches and build artefacts
+# Quality checks
+ruff check .                            # lint
+ruff format .                           # auto-format
+ty check src/                           # type-check
+
+# Tests
+pytest tests/unit/                      # unit only — no database needed
+pytest tests/integration/               # integration — requires running DB
+pytest --cov-fail-under=80              # full suite + 80% coverage gate (what CI runs)
+
+# Migrations
+alembic upgrade head                                       # apply pending migrations
+alembic revision --autogenerate -m "describe the change"   # generate new migration
 
 # Frontend (local development only — Docker handles the production build)
 cd frontend && npm run dev          # Vite dev server with /api proxy to FastAPI
@@ -114,9 +122,9 @@ npm run dev
 ## How to run tests
 
 ```bash
-make test                 # all tests
-make test-unit            # unit only (no DB)
-make test-integration     # integration (requires DB)
+pytest --cov-fail-under=80    # all tests + 80% coverage gate (what CI runs)
+pytest tests/unit/            # unit only (no DB)
+pytest tests/integration/     # integration (requires DB — `docker compose up db -d`)
 ```
 
 ---

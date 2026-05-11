@@ -15,7 +15,7 @@ Last updated: 2026-05-11 — post PR 2 design pivot (identity model: email + sha
 | AI Usage | 9.5 | Spec + PR 1 + PR 2 + design pivot | AI_USAGE.md documents two reviewer cycles plus a substantial mid-PR design pivot. Treats AI suggestions as advisory not authoritative; honest about both accepted catches and rejected claims, with reasoning. |
 | Problem Solving | 9.0 | Spec | All business logic correctly specified. Edge cases covered (oversell, partial sell, concurrent uploads). |
 | Documentation | 9.8 | Spec + PR 2 + ADR 016 | SPEC.md gained §0 "Deployment Context" as a first-class, load-bearing section so automated scanners reach the same conclusions as a human reviewer. ADR 016 documents the identity pivot with full alternatives table. Per-function docstrings explain non-obvious contracts (atomicity, ON CONFLICT semantics, intentional migration duplication, UTC convention). |
-| DevOps & Tooling | 9.5 | Spec | Docker multi-stage, docker-compose, CI with lint→test→AI review, pre-commit, Makefile, 80% coverage gate. |
+| DevOps & Tooling | 9.5 | Spec | Three-stage Docker build (Node → Python venv → lean runtime), docker-compose with healthcheck-gated startup, CI with lint → test → integration → AI review pipeline, 80% coverage gate enforced in CI. |
 | Bonus Coverage | 9.5 | Spec + PR 2 | Bonus analytics (`get_win_rates`, `get_top_realized_pnl_client`, `get_most_traded_day`), upload history, instant activate, dark mode, loading states, error handling, indexing, precomputed analytics. |
 | Code Quality | 9.2 | PR 2 + pivot | SQLAlchemy 2.0 idiomatic style (`Mapped[]`/`mapped_column`), thorough type annotations, async correctness, race-safe `INSERT ... ON CONFLICT` user upsert. The PR 2 reviewer's two real bug catches (ownership filter, race condition) became moot post-pivot — their entire surface area was removed — but the discipline of catching them survives in the `INSERT … ON CONFLICT` pattern still used for first-sight email lookup. Held back from 9.5 by lack of tests covering the DB layer (PR 5). |
 | Test Coverage | — | Impl | 80% threshold configured; tests not yet written (PR 3 onward). |
@@ -45,14 +45,14 @@ Last updated: 2026-05-11 — post PR 2 design pivot (identity model: email + sha
 - No direct `os.environ` calls in business logic
 
 ### Test Coverage → score when tests exist
-- `make test` passes green with ≥ 80% coverage
+- `pytest --cov-fail-under=80` passes green with ≥ 80% coverage
 - Integration tests cover the two-user isolation scenario
 - Edge cases listed in SPEC §7 all have corresponding tests
 
 ### Execution → 10
 - `docker compose up --build` works on a clean machine in one command
-- `make migrate` applies cleanly against a fresh Postgres instance
-- `make install && make test` passes on a clean Python 3.12 environment
+- `alembic upgrade head` applies cleanly against a fresh Postgres instance
+- `pip install -e ".[dev]" && pytest --cov-fail-under=80` passes on a clean Python 3.12 environment
 - README instructions are literally copy-pasteable (no guesswork)
 
 ---
