@@ -5,7 +5,12 @@ Derived from `assignment/Final_Assignment.md`. Each item is marked against the c
 Legend (Spec): ✅ Covered in spec | ⚠️ Gap or concern | ❌ Missing
 Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
-> **Status:** PR 1 (`feat/foundation`) merged 2026-05-10 — infrastructure only (deps, `Settings`, async DB engine, `alembic.ini`, `.env.example`). A–H rows remain ⬜ until their implementation PR lands. PR-level tracker lives in [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+> **Status:**
+> - PR 1 (`feat/foundation`) merged 2026-05-10 — shared infrastructure (config, async DB engine, alembic.ini, .env.example).
+> - PR 2 (`feat/database-layer`) merged 2026-05-11 — ORM models, initial migration, 7 repositories. Part E is fully covered at the storage layer.
+> - PR 3 (`feat/domain-and-ingestion`) merged 2026-05-11 — Excel parser, row validator, FIFO engine, violation detectors, per-client analytics + 37 passing unit tests.
+>
+> Rows are marked **🔄 In progress** when the underlying code is implemented but is not yet exposed by an API endpoint (that arrives in PR 4). PR-level tracker lives in [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -13,11 +18,11 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
 | # | Requirement | Spec | Impl | Notes |
 |---|-------------|------|------|-------|
-| A1 | Load and parse the Excel file | ✅ | ⬜ | `ingestion/parser.py` — openpyxl `read_only=True` streaming |
-| A2 | Normalize data | ✅ | ⬜ | Whitespace strip, title-case action, UTC timestamp normalisation |
-| A3 | Validate: Quantity > 0 | ✅ | ⬜ | `ingestion/validator.py` — full row validation before any DB write |
-| A4 | Validate: Price > 0 | ✅ | ⬜ | Same |
-| A5 | Validate: Action must be Buy or Sell | ✅ | ⬜ | Same |
+| A1 | Load and parse the Excel file | ✅ | 🔄 | `ingestion/parser.py` shipped in PR 3 (openpyxl `read_only=True` streaming, header validation). Awaiting API wiring in PR 4. |
+| A2 | Normalize data | ✅ | 🔄 | `ingestion/validator.py` — whitespace strip, title-case action, tz-aware → naïve UTC. Covered by 16 unit tests. |
+| A3 | Validate: Quantity > 0 | ✅ | 🔄 | Validator emits `RowError`; covered by `test_validation.py`. Whole-file rejection (ADR 011) wires up in PR 4. |
+| A4 | Validate: Price > 0 | ✅ | 🔄 | Same |
+| A5 | Validate: Action must be Buy or Sell | ✅ | 🔄 | Same — also catches case variations (`buy` → `Buy`) and rejects anything else. |
 
 ---
 
@@ -39,10 +44,10 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
 | # | Requirement | Spec | Impl | Notes |
 |---|-------------|------|------|-------|
-| C1 | FIFO cost calculation | ✅ | ⬜ | Full pseudocode in SPEC §5.2 — deque-based lot matching |
-| C2 | Realized P&L | ✅ | ⬜ | Computed per (client, ISIN) during FIFO pass |
-| C3 | Unrealized P&L | ✅ | ⬜ | Last price per ISIN × remaining quantity |
-| C4 | Positions per ISIN | ✅ | ⬜ | One position row per (upload, client, ISIN) |
+| C1 | FIFO cost calculation | ✅ | 🔄 | `domain/fifo.py` — deque-based lot matching, 9 unit tests covering basic, ordering, partial sell, oversell, empty queue, multi-client independence. |
+| C2 | Realized P&L | ✅ | 🔄 | Computed per (client, ISIN) during FIFO pass; tested in `test_fifo.py`. |
+| C3 | Unrealized P&L | ✅ | 🔄 | Last price per ISIN propagates across clients in the same upload; tested. |
+| C4 | Positions per ISIN | ✅ | 🔄 | One `Position` dataclass per (client, ISIN). DB rows produced by PR 4's upload route. |
 
 ---
 
@@ -50,10 +55,10 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
 | # | Requirement | Spec | Impl | Notes |
 |---|-------------|------|------|-------|
-| D1 | Day Trading (>3 pairs in 24h → flag) | ✅ | ⬜ | SPEC §5.3 — per-client 24h sliding window |
-| D2 | Risk Concentration (ISIN > 50% → warning) | ✅ | ⬜ | SPEC §5.4 — market value weighting |
-| D3 | Sell Before Buy → ERROR | ✅ | ⬜ | FIFO engine emits violation, skips match, no short position |
-| D4 | Invalid Values (price/qty ≤ 0 → ERROR) | ✅ | ⬜ | Caught in validation pass — entire upload rejected |
+| D1 | Day Trading (>3 pairs in 24h → flag) | ✅ | 🔄 | `domain/violations.detect_day_trading` — per-client 24h window; 5 unit tests (threshold, outside-window, per-client, single-violation). |
+| D2 | Risk Concentration (ISIN > 50% → warning) | ✅ | 🔄 | `domain/violations.detect_risk_concentration` — 6 unit tests (above/at/below threshold, per-client, zero portfolio). |
+| D3 | Sell Before Buy → ERROR | ✅ | 🔄 | FIFO engine emits violation, skips match, no short position. Tested in `test_fifo.py`. |
+| D4 | Invalid Values (price/qty ≤ 0 → ERROR) | ✅ | 🔄 | Validator catches at ingestion; whole-file rejection (ADR 011) needs PR 4's route. |
 
 ---
 
@@ -107,11 +112,11 @@ Legend (Impl): ⬜ Not started | 🔄 In progress | ✅ Done
 
 | # | Requirement | Spec | Impl | Notes |
 |---|-------------|------|------|-------|
-| H1 | At least 1 API endpoint test | ✅ | ⬜ | `tests/integration/test_api.py` — multiple endpoint tests |
-| H2 | At least 2 business logic tests | ✅ | ⬜ | `tests/unit/test_fifo.py`, `test_violations.py`, `test_validation.py` |
-| H3 | Tests runnable via simple command | ✅ | ⬜ | `make test` — single command, coverage report included |
-| — | Edge cases (BONUS) | ✅ | ⬜ | Partial sells, oversells, empty queues, wrong-column Excel |
-| — | Improved coverage (BONUS) | ✅ | ⬜ | 80% coverage threshold enforced via `--cov-fail-under=80` |
+| H1 | At least 1 API endpoint test | ✅ | ⬜ | Integration tests land in PR 5. |
+| H2 | At least 2 business logic tests | ✅ | ✅ | **PR 3 ships 37 unit tests across 3 files** (`test_fifo.py`, `test_violations.py`, `test_validation.py`) — well past the 2-test bar. |
+| H3 | Tests runnable via simple command | ✅ | ✅ | `make test-unit` runs 37 tests in <0.1s, no warnings. `make test` will enforce 80% gate once PR 5's integration tests bring DB coverage up. |
+| — | Edge cases (BONUS) | ✅ | ✅ | Partial sells, oversells, empty queues, FIFO ordering, multi-client independence, tz-aware timestamp normalisation, bool-as-quantity guard — all covered. |
+| — | Improved coverage (BONUS) | ✅ | 🔄 | 80% gate moved from `pyproject.toml` `addopts` to `make test` only, so unit-only runs don't fail it. Threshold will be re-validated end-to-end in PR 5. |
 
 ---
 

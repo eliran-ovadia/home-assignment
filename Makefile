@@ -18,8 +18,8 @@ typecheck:  ## Run ty static type checking
 
 check: lint typecheck  ## Run all static checks (lint + types)
 
-test:  ## Run full test suite with coverage
-	pytest
+test:  ## Run full test suite with coverage (enforces ≥80%)
+	pytest --cov-fail-under=80
 
 test-unit:  ## Run only unit tests (no database required)
 	pytest tests/unit/

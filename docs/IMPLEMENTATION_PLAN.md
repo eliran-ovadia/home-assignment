@@ -173,8 +173,8 @@ Also updates:
 | PR | Branch | Status | Merged |
 |----|--------|--------|--------|
 | 1 | `feat/foundation` | ✅ Done | 2026-05-10 |
-| 2 | `feat/database-layer` | ⬜ Not started | — |
-| 3 | `feat/domain-and-ingestion` | ⬜ Not started | — |
+| 2 | `feat/database-layer` | ✅ Done | 2026-05-11 |
+| 3 | `feat/domain-and-ingestion` | ✅ Done | 2026-05-11 |
 | 4 | `feat/api-layer` | ⬜ Not started | — |
 | 5 | `feat/integration-tests` | ⬜ Not started | — |
 | 6 | `feat/frontend` | ⬜ Not started | — |
