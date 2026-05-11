@@ -20,7 +20,8 @@
       "Bash(docker exec *)",
       "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=assignment DB_USER=postgres DB_PASSWORD=integration_test_pw python -m pytest tests/integration/ --no-cov -x)",
       "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=assignment DB_USER=postgres DB_PASSWORD=integration_test_pw make test)",
-      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=assignment DB_USER=postgres DB_PASSWORD=integration_test_pw python -m pytest --cov-fail-under=80)"
+      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=assignment DB_USER=postgres DB_PASSWORD=integration_test_pw python -m pytest --cov-fail-under=80)",
+      "Bash(unset DB_PASSWORD)"
     ]
   }
 }

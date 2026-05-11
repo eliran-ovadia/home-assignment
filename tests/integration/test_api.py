@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-from tests.conftest import (
+from tests.integration.conftest import (
     DEFAULT_USER_EMAIL,
     HEADER_ROW,
     OTHER_USER_EMAIL,
