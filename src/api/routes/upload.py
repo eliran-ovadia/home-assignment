@@ -7,10 +7,11 @@ Flow (all inside one DB transaction once we reach the bulk-insert step):
   3. Validate every row's structure — also CPU-bound.
      • Any structural error → return 422 with the rejected_rows list. Nothing
        written. (Structural = wrong type, missing column/field, bad action.)
-  4. Partition rows by value validity. Rows with quantity ≤ 0 or price ≤ 0
+  4. Partition rows by value validity. Rows with quantity < 0 or price < 0
      become INVALID_VALUE violations (severity ERROR) but the upload still
      proceeds — they're persisted to `transactions` for audit and excluded
-     from FIFO/analytics. This matches the assignment's Part D rule matrix.
+     from FIFO/analytics. This matches the assignment's Part D rule matrix
+     (zero is permitted; the rule is strictly less-than).
   5. Run the FIFO engine and the violation detectors — CPU-bound.
   6. Compute per-client analytics — CPU-bound.
   7. Begin DB transaction:
@@ -19,21 +20,29 @@ Flow (all inside one DB transaction once we reach the bulk-insert step):
         c. Update `users.last_viewed_upload_id` for the current user.
      Commit. If any of (a-c) raises, the whole transaction rolls back and
      the DB is unchanged.
-  7. Return the upload summary.
+  8. Return the upload summary.
 
 All CPU-bound steps are pushed to a thread via `asyncio.to_thread` so the
-event loop keeps serving GET requests during a long parse.
+event loop keeps serving GET requests during a long parse. Non-endpoint
+helpers (file guard, row-shape converters) live in
+`src/api/route_helpers/upload.py`.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from src.api.deps import CurrentUserDep, SessionDep
+from src.api.route_helpers.upload import (
+    client_analytics_to_row,
+    position_to_row,
+    read_and_guard_file,
+    validated_row_to_tx,
+    violation_to_row,
+)
 from src.api.schemas import (
     RejectedRow,
     RejectedRowsResponse,
@@ -48,12 +57,6 @@ from src.db.repositories import users as users_repo
 from src.db.repositories import violations as violations_repo
 from src.domain.analytics import compute_client_analytics
 from src.domain.fifo import run_fifo
-from src.domain.models import (
-    ClientAnalyticsData,
-    Position,
-    ValidatedRow,
-    ViolationRecord,
-)
 from src.domain.violations import (
     detect_day_trading,
     detect_invalid_values,
@@ -63,8 +66,6 @@ from src.ingestion.parser import HeaderValidationError, parse_workbook
 from src.ingestion.validator import validate_rows
 
 router = APIRouter()
-
-MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB — SPEC §0 / §4
 
 
 @router.post(
@@ -81,7 +82,7 @@ async def upload_transactions(
     file: UploadFile = File(...),  # noqa: B008 — File(...) at the default is the FastAPI idiom
 ) -> UploadResponse | JSONResponse:
     """Ingest an .xlsx file end-to-end and persist the results atomically."""
-    content = await _read_and_guard_file(file)
+    content = await read_and_guard_file(file)
 
     # CPU-bound steps off the event loop. Parser + validator + FIFO + analytics
     # are all pure Python with no async-aware libraries; the thread offload
@@ -150,16 +151,16 @@ async def upload_transactions(
     upload_id = upload_row.id
 
     await transactions_repo.bulk_insert(
-        session, [_validated_row_to_tx(row, upload_id) for row in valid_rows]
+        session, [validated_row_to_tx(row, upload_id) for row in valid_rows]
     )
     await positions_repo.bulk_insert(
-        session, [_position_to_row(pos, upload_id) for pos in fifo_result.positions]
+        session, [position_to_row(pos, upload_id) for pos in fifo_result.positions]
     )
     await client_analytics_repo.bulk_insert(
-        session, [_client_analytics_to_row(ca, upload_id) for ca in client_analytics]
+        session, [client_analytics_to_row(ca, upload_id) for ca in client_analytics]
     )
     await violations_repo.bulk_insert(
-        session, [_violation_to_row(v, upload_id) for v in all_violations]
+        session, [violation_to_row(v, upload_id) for v in all_violations]
     )
     await users_repo.update_last_viewed(session, user_id=user.id, upload_id=upload_id)
     await session.commit()
@@ -172,88 +173,3 @@ async def upload_transactions(
             violations_detected=len(all_violations),
         ),
     )
-
-
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-
-async def _read_and_guard_file(file: UploadFile) -> bytes:
-    """
-    Validate the filename, read the body, and enforce empty/size guards.
-
-    No MIME-type check: browsers and curl alike send `application/octet-stream`
-    for files of unknown type, so a strict allow-list would lock out legitimate
-    uploads, and a permissive allow-list (the previous approach) accepted
-    almost anything — strictly worse than no check, because it *looks* like a
-    security gate. The `.xlsx` filename check is a cheap smoke filter;
-    openpyxl is the real validator (it raises `HeaderValidationError` if the
-    bytes aren't a readable workbook).
-    """
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Expected an .xlsx file",
-        )
-    content = await file.read()
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Uploaded file is empty",
-        )
-    if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"File exceeds the {MAX_FILE_BYTES // (1024 * 1024)}MB limit",
-        )
-    return content
-
-
-def _validated_row_to_tx(row: ValidatedRow, upload_id: int) -> dict[str, Any]:
-    return {
-        "upload_id": upload_id,
-        "transaction_id": row.transaction_id,
-        "client_id": row.client_id,
-        "isin": row.isin,
-        "action": row.action,
-        "quantity": row.quantity,
-        "price": row.price,
-        "timestamp": row.timestamp,
-    }
-
-
-def _position_to_row(pos: Position, upload_id: int) -> dict[str, Any]:
-    return {
-        "upload_id": upload_id,
-        "client_id": pos.client_id,
-        "isin": pos.isin,
-        "quantity": pos.quantity,
-        "avg_cost": pos.avg_cost,
-        "realized_pnl": pos.realized_pnl,
-        "unrealized_pnl": pos.unrealized_pnl,
-        "last_price": pos.last_price,
-    }
-
-
-def _violation_to_row(v: ViolationRecord, upload_id: int) -> dict[str, Any]:
-    return {
-        "upload_id": upload_id,
-        "transaction_id": v.transaction_id,
-        "client_id": v.client_id,
-        "isin": v.isin,
-        "violation_type": v.violation_type,
-        "severity": v.severity,
-        "description": v.description,
-    }
-
-
-def _client_analytics_to_row(ca: ClientAnalyticsData, upload_id: int) -> dict[str, Any]:
-    return {
-        "upload_id": upload_id,
-        "client_id": ca.client_id,
-        "avg_holding_days": ca.avg_holding_days,
-        "max_portfolio_value": ca.max_portfolio_value,
-        "min_portfolio_value": ca.min_portfolio_value,
-        "value_range": ca.value_range,
-        "winning_trades": ca.winning_trades,
-        "total_trades": ca.total_trades,
-    }

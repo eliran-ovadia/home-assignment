@@ -6,6 +6,8 @@ Each test goes through the real ASGI app via `httpx.AsyncClient` and the
 real per-test PostgreSQL schema. There are no mocks of the DB layer or the
 domain layer — these tests are the gate that proves all four prior PRs
 compose correctly.
+
+NOTE: These tests are designed to run in GitHub actions runner with a postgres instance available.
 """
 
 from __future__ import annotations
