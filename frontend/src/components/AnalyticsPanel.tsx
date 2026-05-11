@@ -2,7 +2,17 @@
 // rendered as a row of cards when the API returns it (SPEC §4 says the
 // `bonus` key is omitted if there is no data to populate it).
 
-import { Card, Col, Empty, Row, Statistic, Table, Tag, message } from "antd";
+import {
+  Card,
+  Col,
+  Divider,
+  Empty,
+  Row,
+  Statistic,
+  Table,
+  Tag,
+  message,
+} from "antd";
 import { useEffect, useState } from "react";
 import { getAnalytics } from "../api/client";
 import type {
@@ -175,8 +185,10 @@ export function AnalyticsPanel({ refreshKey }: AnalyticsPanelProps) {
 
       {data.bonus && (
         <>
-          <Card.Meta style={{ marginTop: 24 }} description="Bonus analytics" />
-          <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
+          <Divider orientation="left" style={{ marginTop: 24 }}>
+            Bonus analytics
+          </Divider>
+          <Row gutter={[16, 16]}>
             {data.bonus.top_realized_pnl_client && (
               <Col xs={24} md={8}>
                 <Card type="inner" title="Top realized P&L client">

@@ -43,9 +43,11 @@ export function ViolationsTable({ refreshKey }: ViolationsTableProps) {
       .then((data) => {
         if (!cancelled) setClients(data);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         // Non-fatal — the violation table itself still works without
-        // the client dropdown being populated.
+        // the client dropdown being populated. Logged so the failure
+        // mode is visible in the browser console.
+        console.warn("ViolationsTable: failed to load client list", err);
       });
     return () => {
       cancelled = true;

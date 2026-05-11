@@ -3,9 +3,10 @@
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install:  ## Install all dependencies and set up pre-commit hooks
+install:  ## Install all dependencies (backend + frontend) and set up pre-commit hooks
 	pip install -e ".[dev]"
 	pre-commit install
+	cd frontend && npm install
 
 lint:  ## Run ruff linter
 	ruff check .

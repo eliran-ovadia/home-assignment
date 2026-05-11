@@ -82,7 +82,8 @@ export function UploadSection({ onUploaded }: UploadSectionProps) {
             Drop an .xlsx file here, or click to browse
           </p>
           <p className="ant-upload-hint">
-            10 MB max · accepts the SPEC §5.1 column layout
+            10 MB max · expected columns: ClientId, TransactionId, ISIN, Action,
+            Quantity, Price, Timestamp
           </p>
         </Upload.Dragger>
       </Spin>

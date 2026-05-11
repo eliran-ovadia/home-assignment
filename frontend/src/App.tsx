@@ -54,14 +54,25 @@ export function App() {
     setEmail(null);
   };
 
+  const themeConfig = {
+    algorithm:
+      mode === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+  };
+
+  // Email gate is rendered alone — no Layout, no data components — so the
+  // children's useEffects don't fire unauthenticated requests before the
+  // user has entered their email. The fetches would 400 anyway (no
+  // X-Session-Token), but the network noise is avoidable.
+  if (!email) {
+    return (
+      <ConfigProvider theme={themeConfig}>
+        <EmailGate onSubmit={setEmail} />
+      </ConfigProvider>
+    );
+  }
+
   return (
-    <ConfigProvider
-      theme={{
-        algorithm:
-          mode === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-      }}
-    >
-      {!email && <EmailGate onSubmit={setEmail} />}
+    <ConfigProvider theme={themeConfig}>
       <Layout style={{ minHeight: "100vh" }}>
         <Layout.Header
           style={{
@@ -76,23 +87,19 @@ export function App() {
             Lumina Capital
           </Typography.Title>
           <Space>
-            {email && (
-              <Typography.Text type="secondary">{email}</Typography.Text>
-            )}
+            <Typography.Text type="secondary">{email}</Typography.Text>
             <Button
               type="text"
               icon={mode === "dark" ? <BulbFilled /> : <BulbOutlined />}
               onClick={() => setMode(mode === "dark" ? "light" : "dark")}
               aria-label="Toggle theme"
             />
-            {email && (
-              <Button
-                type="text"
-                icon={<LogoutOutlined />}
-                onClick={onLogout}
-                aria-label="Sign out"
-              />
-            )}
+            <Button
+              type="text"
+              icon={<LogoutOutlined />}
+              onClick={onLogout}
+              aria-label="Sign out"
+            />
           </Space>
         </Layout.Header>
 

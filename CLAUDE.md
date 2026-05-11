@@ -90,6 +90,7 @@ When changing a tool or adding one, update **all** of these files. This map is t
 | Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty.environment] python-version`, `docs/decisions/001` |
 | ORM models | `src/db/models.py`, `migrations/versions/`, `docs/decisions/010` |
 | Identity / sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (email-in-localStorage + header injection), `docs/decisions/016`, `docs/SPEC.md` §0 |
+| Frontend (Node / npm) | `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`, `Makefile` `install` target (`npm install`), `Dockerfile` Stage 1 (Node build), `README.md` setup section, `.gitignore` (`frontend/node_modules`, `frontend/dist`, `frontend/.vite`) |
 
 ## Configuration & Secrets
 
