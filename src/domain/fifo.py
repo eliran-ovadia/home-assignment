@@ -180,7 +180,17 @@ def run_fifo(transactions: Iterable[ValidatedRow]) -> FIFOResult:
 def _group_and_sort(
     transactions: list[ValidatedRow],
 ) -> dict[tuple[str, str], list[ValidatedRow]]:
-    """Group transactions by (client_id, isin) and sort each group by (timestamp, row_number)."""
+    """
+    Group transactions by (client_id, isin) and sort each group by
+    (timestamp, row_number).
+
+    The per-group sort is a *correctness* requirement — FIFO must process
+    transactions in chronological order. The caller in `run_fifo` then
+    iterates `sorted(groups.items())`, which is a *determinism* convenience
+    (stable test output, predictable violation ordering) rather than a
+    correctness requirement: each `(client, isin)` pair is independent of
+    every other, so processing order between pairs cannot change the result.
+    """
     groups: dict[tuple[str, str], list[ValidatedRow]] = {}
     for tx in transactions:
         groups.setdefault((tx.client_id, tx.isin), []).append(tx)

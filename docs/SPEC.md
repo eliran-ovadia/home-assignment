@@ -578,14 +578,17 @@ avg_cost = weighted_average(lot_queue) if net_quantity > 0 else 0.0
 
 **Rule:** Per client, more than 3 buy/sell pairs within any 24-hour window → `DAY_TRADING` (FLAG).
 
+A **pair** is an ISIN that has *both* a Buy *and* a Sell within the window — this matches the industry meaning of a "day-trading pair". An anchor Buy whose window contains sells of *other* ISINs (with no Buy of those ISINs in the same window) does **not** count toward the pair total; those sells are typically `SELL_BEFORE_BUY` situations, not day-trading.
+
 ```
 for each client:
     transactions_sorted = sort by timestamp
     for each Buy transaction t:
         window_end = t.timestamp + 24h
-        pairs = count of distinct ISINs where a Sell also exists
-                in [t.timestamp, window_end] for this client
-        if pairs > 3:
+        buys_in_window  = { ISIN of every Buy  in [t.timestamp, window_end] }
+        sells_in_window = { ISIN of every Sell in [t.timestamp, window_end] }
+        pairs = buys_in_window ∩ sells_in_window
+        if |pairs| > 3:
             emit DAY_TRADING violation
             break  # one violation per client
 ```

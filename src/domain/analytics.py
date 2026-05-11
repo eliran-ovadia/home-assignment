@@ -103,11 +103,24 @@ def _simulate_portfolio_extremes(
     used to revalue client A's existing X holdings on that same timestamp.
     This is what makes the simulation reflect a shared market rather than
     each client living in their own price world.
+
+    Per SPEC §5.5 we observe portfolio values *after every transaction*,
+    not before the first one. Each client's min/max are therefore seeded
+    by their first post-transaction observation, not by a synthetic
+    pre-trade zero baseline. (A buy-only client whose portfolio rises from
+    nothing to $10K and stays there will have min == max == $10K, range
+    == 0 — not range == $10K. That matches the "volatility" intent of the
+    most-volatile-client analytic.)
+
+    Complexity: O(n × c) — every transaction triggers a full pass over the
+    `clients` set. Acceptable at assignment scale (≤ 200k rows × ~hundreds
+    of clients); see `docs/PRODUCTION_ROADMAP.md` for the index-based
+    optimisation when this becomes a bottleneck.
     """
     holdings: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
     last_prices: dict[str, Decimal] = {}
-    min_value = dict.fromkeys(clients, ZERO)
-    max_value = dict.fromkeys(clients, ZERO)
+    min_value: dict[str, Decimal] = {}
+    max_value: dict[str, Decimal] = {}
 
     for tx in sorted(transactions, key=lambda r: (r.timestamp, r.row_number)):
         _apply_to_holdings(holdings[tx.client_id], tx)
@@ -115,12 +128,23 @@ def _simulate_portfolio_extremes(
 
         for client_id in clients:
             value = _portfolio_value(holdings.get(client_id, {}), last_prices)
-            if value < min_value[client_id]:
+            if client_id not in min_value:
+                # First observation for this client — seed both bounds.
                 min_value[client_id] = value
-            if value > max_value[client_id]:
                 max_value[client_id] = value
+            else:
+                if value < min_value[client_id]:
+                    min_value[client_id] = value
+                if value > max_value[client_id]:
+                    max_value[client_id] = value
 
-    return {c: _Extremes(min_value=min_value[c], max_value=max_value[c]) for c in clients}
+    # Defensive fallback: `clients` is derived from `transactions`, so every
+    # client must have produced at least one observation above. This keeps
+    # the function total in the (impossible) empty-transactions edge case.
+    return {
+        c: _Extremes(min_value=min_value.get(c, ZERO), max_value=max_value.get(c, ZERO))
+        for c in clients
+    }
 
 
 def _apply_to_holdings(holdings: dict[str, Decimal], tx: ValidatedRow) -> None:

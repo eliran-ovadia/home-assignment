@@ -114,6 +114,24 @@ def test_day_trading_emits_at_most_one_violation_per_client() -> None:
     assert len(violations) == 1
 
 
+def test_day_trading_sells_without_matching_buy_do_not_count_as_pairs() -> None:
+    """
+    SPEC §5.3 (clarified): a pair requires BOTH a Buy and a Sell of the same
+    ISIN in the window. A client who buys A and then sells B/C/D/E (without
+    ever buying B/C/D/E in this upload) is misbehaving — those sells will
+    surface as SELL_BEFORE_BUY violations from the FIFO engine — but they
+    are NOT day-trading pairs and must not flag DAY_TRADING.
+    """
+    transactions: list[ValidatedRow] = [
+        _tx(1, isin="ISIN_A", action="Buy", hour=9),  # anchor
+        _tx(2, isin="ISIN_B", action="Sell", hour=10),
+        _tx(3, isin="ISIN_C", action="Sell", hour=10),
+        _tx(4, isin="ISIN_D", action="Sell", hour=10),
+        _tx(5, isin="ISIN_E", action="Sell", hour=10),
+    ]
+    assert detect_day_trading(transactions) == []
+
+
 # ── Risk-concentration detector ───────────────────────────────────────────────
 
 

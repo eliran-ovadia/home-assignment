@@ -45,10 +45,11 @@ def detect_day_trading(transactions: Iterable[ValidatedRow]) -> list[ViolationRe
     Return one DAY_TRADING violation per client whose trades cross the
     pair-threshold in any rolling 24-hour window.
 
-    A "pair" for window-counting purposes is a distinct ISIN that has both
-    a Buy at-or-after the window start and a Sell within the window. This
-    follows SPEC §5.3: "count of distinct ISINs where a Sell also exists in
-    [t.timestamp, window_end]". The window is anchored at each Buy in turn.
+    A "pair" is an ISIN that has *both* a Buy and a Sell within the same
+    24-hour window — this matches the industry meaning of a day-trading
+    pair. An anchor Buy with a Sell of a different ISIN (and no Buy of
+    that other ISIN inside the same window) does not constitute a pair.
+    SPEC §5.3 was clarified to match this interpretation.
     """
     by_client: dict[str, list[ValidatedRow]] = defaultdict(list)
     for tx in transactions:
@@ -69,16 +70,16 @@ def _first_day_trading_breach(
 ) -> tuple[datetime.datetime, set[str]] | None:
     """
     Return `(anchor_ts, isins)` for the first Buy whose 24-hour window
-    contains sells on more than `DAY_TRADING_PAIR_THRESHOLD` distinct ISINs,
-    or None if the client never breaches the threshold.
+    contains more than `DAY_TRADING_PAIR_THRESHOLD` distinct same-ISIN
+    buy/sell pairs, or None if the client never breaches the threshold.
 
-    Anchoring on each Buy in turn matches SPEC §5.3 — the rolling 24h window
-    starts at a Buy and looks forward.
+    Anchoring on each Buy in turn matches SPEC §5.3 — the rolling 24h
+    window starts at a Buy and looks forward.
     """
     for anchor in txs_sorted:
         if anchor.action != ACTION_BUY:
             continue
-        isins = _sells_in_window(
+        isins = _matched_pairs_in_window(
             txs_sorted, anchor.timestamp, anchor.timestamp + DAY_TRADING_WINDOW
         )
         if len(isins) > DAY_TRADING_PAIR_THRESHOLD:
@@ -86,17 +87,28 @@ def _first_day_trading_breach(
     return None
 
 
-def _sells_in_window(
+def _matched_pairs_in_window(
     txs: list[ValidatedRow],
     window_start: datetime.datetime,
     window_end: datetime.datetime,
 ) -> set[str]:
-    """Distinct ISINs with a Sell transaction in `[window_start, window_end]`."""
-    return {
-        tx.isin
-        for tx in txs
-        if tx.action == ACTION_SELL and window_start <= tx.timestamp <= window_end
-    }
+    """
+    ISINs that have *both* a Buy and a Sell inside `[window_start, window_end]`.
+
+    Returning the intersection (not just the sell-set) is what enforces the
+    "pair" semantics. An ISIN with only sells in the window — typically a
+    SELL_BEFORE_BUY situation — does not count as a day-trading pair here.
+    """
+    buys: set[str] = set()
+    sells: set[str] = set()
+    for tx in txs:
+        if not (window_start <= tx.timestamp <= window_end):
+            continue
+        if tx.action == ACTION_BUY:
+            buys.add(tx.isin)
+        elif tx.action == ACTION_SELL:
+            sells.add(tx.isin)
+    return buys & sells
 
 
 def _day_trading_violation(
@@ -107,8 +119,8 @@ def _day_trading_violation(
         violation_type=VIOLATION_DAY_TRADING,
         severity=SEVERITY_FLAG,
         description=(
-            f"Client {client_id} traded {len(isins)} "
-            f"distinct ISINs within 24h starting at {anchor_ts.isoformat()} "
+            f"Client {client_id} executed {len(isins)} "
+            f"buy/sell pairs within 24h starting at {anchor_ts.isoformat()} "
             f"(threshold: > {DAY_TRADING_PAIR_THRESHOLD})"
         ),
     )

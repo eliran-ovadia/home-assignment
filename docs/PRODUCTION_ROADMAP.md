@@ -57,6 +57,16 @@ Each item includes why it was deferred and what it would take to implement.
 
 ---
 
+## 4a. Portfolio-Value Simulation Indexing
+
+**Current:** `src/domain/analytics.py`'s `_simulate_portfolio_extremes` revalues *every* client's portfolio after *every* transaction — O(n × c) where n is transaction count and c is client count. At assignment scale (≤ 200k rows × ~hundreds of clients) this is acceptable: even 200,000 × 500 = 100M `Decimal` operations runs in single-digit seconds.
+
+**Production:** maintain an inverted index `isin → set[client_id holding it]` alongside the holdings dictionary. After each transaction, only the *trading* client (whose holdings just changed) and the clients in `isin_holders[tx.isin]` (whose mark-to-market value moved because the price moved) need revaluation. For sparse portfolios this collapses the inner loop from O(c) to O(holders-per-ISIN), often a handful instead of hundreds.
+
+**Why deferred:** Adds bookkeeping (insert into / remove from the index every time a client's holding for an ISIN crosses zero) for a constant-factor win at this scale. Justified once the analytics walk shows up on a profile.
+
+---
+
 ## 5. Aggregate Upload Mode
 
 **Current:** Each upload replaces all existing data (replace-on-upload, ADR 009). The system analyses one file at a time.

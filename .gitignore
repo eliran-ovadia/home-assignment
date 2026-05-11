@@ -187,6 +187,16 @@ cython_debug/
 #   and can be added to the global gitignore or merged into this file.  For a more nuclear
 #   option (not recommended) you can uncomment the following to ignore the entire idea folder.
 # .idea/
+# User-specific JetBrains state that should never be committed: DB connection
+# definitions (point at local file paths and registered SQLite/coverage files),
+# the local workspace, and the user's shelf. Project-wide settings (.iml,
+# misc.xml, vcs.xml, code-style profiles) stay tracked.
+.idea/dataSources/
+.idea/dataSources.xml
+.idea/dataSources.local.xml
+.idea/sqlDataSources.xml
+.idea/workspace.xml
+.idea/shelf/
 
 # Abstra
 #   Abstra is an AI-powered process automation framework.

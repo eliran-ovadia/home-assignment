@@ -3,9 +3,15 @@ Domain dataclasses — pure in-memory representations used by the FIFO engine,
 the violation detectors, and the analytics layer. Zero DB or HTTP imports.
 
 These are deliberately separate from the SQLAlchemy mapped classes in
-`src.db.models`: domain code operates on these immutable dataclasses, then
+`src.db.models`: domain code operates on these frozen dataclasses, then
 the API layer converts them to row dicts for `bulk_insert`. The split keeps
 the business logic testable without a database.
+
+A note on "frozen": `frozen=True` prevents re-assigning fields after
+construction, but for `list[...]` fields (notably on `FIFOResult`) it does
+not prevent mutation of the list contents. Callers must not mutate those
+lists after construction; in practice they are consumed immediately by the
+API layer's bulk-insert step.
 """
 
 from __future__ import annotations

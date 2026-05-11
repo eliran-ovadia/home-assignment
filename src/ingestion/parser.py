@@ -56,11 +56,20 @@ def parse_workbook(content: bytes) -> list[RawRow]:
 
 @contextmanager
 def _open_workbook(content: bytes) -> Iterator[Workbook]:
-    """Load *content* as a read-only openpyxl workbook and ensure it closes."""
+    """Load *content* as a read-only openpyxl workbook and ensure it closes.
+
+    Deliberately swallows the underlying openpyxl exception text in the
+    user-facing message — openpyxl errors can include implementation details
+    or file-system paths that we don't want surfaced through the API. The
+    original exception is preserved as the `__cause__` of the
+    `HeaderValidationError` for server-side debugging via `raise … from exc`.
+    """
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
-        raise HeaderValidationError(f"Could not read workbook: {exc}") from exc
+        raise HeaderValidationError(
+            "Could not read workbook — the file may be corrupt or not a valid .xlsx"
+        ) from exc
 
     try:
         yield workbook
@@ -75,9 +84,9 @@ def _read_header_and_build_index(
     Consume the header row from *rows_iter* and return a column-name → index map.
 
     Raises `HeaderValidationError` if the workbook is empty, the header row
-    contains only blanks, or any expected column is missing. Column order in
-    the spreadsheet does not matter — the returned map lets downstream code
-    look cells up by name.
+    contains only blanks, any expected column is missing, or any expected
+    column appears more than once. Column order in the spreadsheet does not
+    matter — the returned map lets downstream code look cells up by name.
     """
     try:
         header_row = next(rows_iter)
@@ -92,7 +101,21 @@ def _read_header_and_build_index(
     if missing:
         raise HeaderValidationError(f"Missing required columns: {sorted(missing)}")
 
-    return {name: header_values.index(name) for name in EXPECTED_COLUMNS}
+    # Detect duplicate headers explicitly — `list.index()` would silently
+    # return the first occurrence and the second copy would be ignored.
+    col_index: dict[str, int] = {}
+    duplicates: list[str] = []
+    for idx, name in enumerate(header_values):
+        if name not in EXPECTED_COLUMNS:
+            continue
+        if name in col_index:
+            duplicates.append(name)
+        else:
+            col_index[name] = idx
+    if duplicates:
+        raise HeaderValidationError(f"Duplicate column headers: {sorted(set(duplicates))}")
+
+    return col_index
 
 
 def _parse_data_rows(
