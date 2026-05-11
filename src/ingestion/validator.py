@@ -1,7 +1,14 @@
 """
-Row-level validator. Applies the rules in SPEC §5.1 to every `RawRow` and
-returns a split of (valid_rows, errors). The API layer rejects the whole
-upload if `errors` is non-empty — see ADR 011.
+Row-level validator. Applies the *structural* rules in SPEC §5.1 to every
+`RawRow` and returns a split of (valid_rows, errors). The API layer rejects
+the whole upload if `errors` is non-empty — see ADR 011.
+
+Scope note: the validator checks **type/shape**, not business values.
+A row whose quantity or price is ≤ 0 still passes here; the assignment's
+Part D classifies those as INVALID_VALUE business-rule violations to be
+flagged in the violations table, not as upload-blocking errors. The
+post-validation detector `detect_invalid_values` in `src.domain.violations`
+filters those rows out of FIFO / analytics and emits the violation records.
 
 Normalisation done here, in this order, per SPEC §5.1:
   - strip whitespace from every string-typed field
@@ -66,8 +73,8 @@ def _validate_one_row(raw: RawRow) -> ValidatedRow | list[RowError]:
     client_id = _take(errs, _validate_text(raw, "client_id", raw.client_id, hint))
     isin = _take(errs, _validate_text(raw, "isin", raw.isin, hint))
     action = _take(errs, _validate_action(raw, raw.action, hint))
-    quantity = _take(errs, _validate_positive_number(raw, "quantity", raw.quantity, hint))
-    price = _take(errs, _validate_positive_number(raw, "price", raw.price, hint))
+    quantity = _take(errs, _validate_number(raw, "quantity", raw.quantity, hint))
+    price = _take(errs, _validate_number(raw, "price", raw.price, hint))
     timestamp = _take(errs, _validate_timestamp(raw, raw.timestamp, hint))
 
     if errs:
@@ -141,10 +148,14 @@ def _validate_action(raw: RawRow, value: Any, hint: str | None) -> RowError | st
     return normalized
 
 
-def _validate_positive_number(
+def _validate_number(
     raw: RawRow, field_name: str, value: Any, hint: str | None
 ) -> RowError | Decimal:
-    """Convert to `Decimal` and require strictly positive."""
+    """
+    Convert to a finite `Decimal`. Does NOT enforce positivity — that's a
+    business-rule check (INVALID_VALUE) handled by `detect_invalid_values`
+    in the domain layer, not a structural validation that rejects the upload.
+    """
     if value is None:
         return _err(raw, hint, field_name, f"Missing required field: {field_name}")
     if isinstance(value, bool):
@@ -157,8 +168,6 @@ def _validate_positive_number(
         return _err(raw, hint, field_name, f"Expected a number, got: {value!r}")
     if not decimal_value.is_finite():
         return _err(raw, hint, field_name, f"Expected a finite number, got: {value!r}")
-    if decimal_value <= 0:
-        return _err(raw, hint, field_name, f"Expected a positive number, got: {value!r}")
     return decimal_value
 
 

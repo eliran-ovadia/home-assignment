@@ -17,7 +17,7 @@ The trust model has four pillars:
 1. **Network perimeter.** Only authenticated corporate users reach the application. The corporate VPN, firewall, or Zero-Trust gateway enforces this boundary; the application does not re-authenticate at the network layer.
 2. **Verified corporate emails.** Every user has a verified corporate email address provisioned by the organization's identity provider (e.g. Microsoft Entra ID / Azure AD, Okta, Google Workspace). The frontend captures this email once per device and submits it on every request via the `X-Session-Token` header. See ADR 016.
 3. **Shared trading-desk data.** All uploads are visible to every user in the organization — this is intentional. Users come to the platform to share trading-desk data with each other, not to keep it private. Per-user state is limited to a single `last_viewed_upload_id` UI preference. See ADR 016.
-4. **Production migration path.** A production rollout replaces the user-typed email with an IdP-injected claim (OIDC / SAML SSO via reverse-proxy SSO header or library middleware). The application code does not change — only `get_current_user` swaps its source from "header value" to "IdP-injected claim". Migration is documented in `docs/PRODUCTION_ROADMAP.md` §6.
+4. **Production migration path.** A production rollout replaces the user-typed email with an IdP-injected claim (OIDC / SAML SSO via reverse-proxy SSO header or library middleware). The application code does not change — only `get_current_user` swaps its source from "header value" to "IdP-injected claim". Migration is documented in `docs/PRODUCTION_ROADMAP.md` §1.
 
 **Implications for security review.** The application accepts a corporate email in an HTTP header without per-request cryptographic verification. Outside the contexts described above this is incomplete — anyone could impersonate anyone. Inside the context the trust boundary has already been enforced upstream by the corporate network and IdP. **Treat the email-in-header pattern as `Remote-User`-style SSO header forwarding, not as primary authentication.**
 
@@ -286,10 +286,18 @@ Indexes: `(upload_id, client_id)`, `(upload_id, violation_type)`.
 
 | violation_type | severity | Transaction inserted? | Processing continues? |
 |---|---|---|---|
-| INVALID_VALUE | ERROR | No | No — entire upload rejected (ADR 011) |
+| INVALID_VALUE | ERROR | Yes — recorded for audit | Yes — row excluded from FIFO and analytics (avoids garbage math); upload itself succeeds (ADR 011) |
 | SELL_BEFORE_BUY | ERROR | Yes | Yes — FIFO match skipped, no short position |
 | DAY_TRADING | FLAG | Yes | Yes |
 | RISK_CONCENTRATION | WARNING | Yes | Yes |
+
+Note: structural problems (missing column, non-numeric value in a numeric
+column, action not in `{Buy, Sell}`, missing required field, non-datetime
+timestamp) still reject the whole file with `422` — those rows can't be
+parsed into the canonical types the rest of the pipeline needs. The
+**INVALID_VALUE** row above is specifically about *non-positive values* in
+otherwise well-formed numeric cells, which the assignment's Part D
+classifies as a violation rather than a parse failure.
 
 ### `client_analytics`
 
@@ -515,18 +523,26 @@ Sets the current user's `last_viewed_upload_id` preference. The pipeline does no
 
 ### 5.1 Validation (`ingestion/validator.py`)
 
-Applied by streaming through the entire file before any DB write. If `invalid_rows` is non-empty → HTTP 422, nothing written.
+Applied by streaming through the entire file before any DB write. The
+validator checks **structural** rules only — type, shape, required-field
+presence, allowed action vocabulary. If `invalid_rows` is non-empty →
+HTTP 422, nothing written.
 
 | Rule | Condition | Error |
 |------|-----------|-------|
-| Positive quantity | `quantity > 0` | "Expected a positive number" |
-| Positive price | `price > 0` | "Expected a positive number" |
 | Valid action | `action in {'Buy', 'Sell'}` | "Expected 'Buy' or 'Sell'" |
-| Numeric types | quantity and price must be numeric | "Expected a number, got: '{value}'" |
+| Numeric types | quantity and price are numeric, finite | "Expected a number, got: '{value}'" |
 | Required fields | all 7 columns present and non-null | "Missing required field: {field}" |
 | Expected columns | all 7 headers must exist | HTTP 422 before row iteration |
 
 Expected columns: `ClientId`, `TransactionId`, `ISIN`, `Action`, `Quantity`, `Price`, `Timestamp`.
+
+**Value rules are *not* in this table.** Per the assignment's Part D matrix,
+non-positive quantity or price is an INVALID_VALUE *business-rule violation*
+(severity ERROR), not a structural error. Those rows pass the validator,
+land in the transactions table for audit, and are flagged by
+`detect_invalid_values` in `domain/violations.py` — see §5.2. The upload
+itself succeeds.
 
 Normalisation applied before validation:
 - Strip whitespace from all string fields
@@ -696,12 +712,15 @@ App
 - 3 round-trips in 24h → not flagged
 - ISIN at 60% of portfolio → RISK_CONCENTRATION flagged
 - ISIN at 40% → not flagged
+- `quantity = 0` → INVALID_VALUE flagged, row excluded from FIFO
+- `price = -5` → INVALID_VALUE flagged, row excluded from FIFO
+- Row with both `quantity ≤ 0` AND `price ≤ 0` → single violation listing both
 
-**test_validation.py**
-- `quantity = 0` → INVALID_VALUE, upload rejected
-- `price = -5` → INVALID_VALUE, upload rejected
-- `action = "HOLD"` → INVALID_VALUE, upload rejected
-- String in quantity column → INVALID_VALUE, upload rejected
+**test_validation.py** (structural rules only)
+- `action = "HOLD"` → upload rejected (422)
+- String in quantity column → upload rejected (422)
+- Missing required field → upload rejected (422)
+- Non-positive quantity/price → **passes** validation (handled in test_violations)
 - Valid row → passes through unchanged
 
 ### Integration Tests (requires DB)
@@ -757,9 +776,9 @@ These are documented for interview discussion — not implemented in the assignm
 
 | Concern | Assignment approach | Production path |
 |---------|--------------------|----|
-| Concurrent uploads | Independent transactions per upload, no lock | Celery + Redis queue: return job ID immediately, client polls |
+| Concurrent uploads | Independent transactions per upload, no lock | Celery + Redis queue: return job ID immediately, client polls (see `PRODUCTION_ROADMAP.md` §2) |
 | Large file parsing | openpyxl read_only streaming, 10MB limit | `python-calamine` (Rust-based, 10–100× faster) + 100MB limit |
-| CPU-bound FIFO | Single-threaded via `asyncio.to_thread()` | `ProcessPoolExecutor` across (client, ISIN) pairs — see `PRODUCTION_ROADMAP.md` |
+| CPU-bound FIFO | Single-threaded via `asyncio.to_thread()` | `ProcessPoolExecutor` across (client, ISIN) pairs — pairs are independent so embarrassingly parallel |
 | DB growth | Rows accumulate per upload indefinitely | Retention policy: archive or delete uploads older than N days |
 | Analytics latency | Precomputed on upload | Redis cache keyed by `upload_id`; invalidate on new upload |
 | Identity | Corporate email in `X-Session-Token` (ADR 016) | OIDC/SAML SSO with IdP-injected claim. `get_current_user()` is the only code that changes. |

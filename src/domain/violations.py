@@ -1,5 +1,12 @@
 """
-Violation detectors — SPEC §5.3 and §5.4.
+Violation detectors — SPEC §5.2, §5.3 and §5.4.
+
+INVALID_VALUE (ERROR)
+    Per row: quantity < 0 or price < 0. The row still lands in the
+    transactions table (so the audit trail records what the user uploaded),
+    but it is excluded from FIFO / day-trading / risk-concentration /
+    analytics — negative quantities are nonsense for position math and
+    zero prices would mask realized P&L. See ADR 011.
 
 DAY_TRADING (FLAG)
     Per client: if more than 3 distinct ISINs have a Buy followed by a Sell
@@ -9,9 +16,8 @@ RISK_CONCENTRATION (WARNING)
     Per client: if a single ISIN's market value exceeds 50% of total
     portfolio value, emit one violation per offending ISIN.
 
-Both are pure functions over already-validated domain data. SELL_BEFORE_BUY
-and INVALID_VALUE violations are produced elsewhere (FIFO engine and
-ingestion validator respectively) — see SPEC §3's violation matrix.
+All three are pure functions over already-parsed domain data. SELL_BEFORE_BUY
+is produced by the FIFO engine — see SPEC §3's violation matrix.
 """
 
 from __future__ import annotations
@@ -24,9 +30,11 @@ from decimal import Decimal
 from src.domain.models import (
     ACTION_BUY,
     ACTION_SELL,
+    SEVERITY_ERROR,
     SEVERITY_FLAG,
     SEVERITY_WARNING,
     VIOLATION_DAY_TRADING,
+    VIOLATION_INVALID_VALUE,
     VIOLATION_RISK_CONCENTRATION,
     Position,
     ValidatedRow,
@@ -38,6 +46,51 @@ DAY_TRADING_WINDOW: datetime.timedelta = datetime.timedelta(hours=24)
 RISK_CONCENTRATION_RATIO: Decimal = Decimal("0.5")
 
 ZERO = Decimal(0)
+
+
+def detect_invalid_values(
+    transactions: Iterable[ValidatedRow],
+) -> tuple[list[ValidatedRow], list[ViolationRecord]]:
+    """
+    Partition transactions into (processable rows, INVALID_VALUE violations).
+
+    A row whose quantity ≤ 0 or price ≤ 0 is preserved for the audit trail
+    (the caller still inserts it into the `transactions` table) but is
+    excluded from FIFO / day-trading / risk-concentration / analytics —
+    those downstream consumers assume positive numerics and the math would
+    silently produce garbage if we let bad rows through.
+
+    Returns:
+        eligible: rows safe to feed to FIFO and the other detectors,
+                  in input order.
+        violations: one INVALID_VALUE record per offending row, severity ERROR.
+    """
+    eligible: list[ValidatedRow] = []
+    violations: list[ViolationRecord] = []
+    for tx in transactions:
+        problems: list[str] = []
+        if tx.quantity < 0:
+            problems.append(f"quantity={tx.quantity}")
+        if tx.price < 0:
+            problems.append(f"price={tx.price}")
+        if problems:
+            violations.append(
+                ViolationRecord(
+                    client_id=tx.client_id,
+                    isin=tx.isin,
+                    transaction_id=tx.transaction_id,
+                    violation_type=VIOLATION_INVALID_VALUE,
+                    severity=SEVERITY_ERROR,
+                    description=(
+                        f"Row {tx.row_number} has invalid {', '.join(problems)} "
+                        f"(quantity and price must be ≥ 0). Row stored for audit "
+                        f"but excluded from positions, P&L, and analytics."
+                    ),
+                )
+            )
+        else:
+            eligible.append(tx)
+    return eligible, violations
 
 
 def detect_day_trading(transactions: Iterable[ValidatedRow]) -> list[ViolationRecord]:

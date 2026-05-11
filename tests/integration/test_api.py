@@ -93,10 +93,17 @@ async def test_upload_with_malformed_email_returns_400(client: AsyncClient) -> N
     assert resp.status_code == 400
 
 
-async def test_upload_invalid_row_returns_422_and_does_not_persist(client: AsyncClient) -> None:
+async def test_upload_structural_error_returns_422_and_does_not_persist(
+    client: AsyncClient,
+) -> None:
+    """
+    Structural errors (non-numeric in numeric column, bad action, missing
+    field, ...) still reject the whole file. Per ADR 011, only *value*
+    rules — quantity/price ≤ 0 — are demoted to INVALID_VALUE violations.
+    """
     rows = [
         row(client_id="C001", quantity=10, price=100),
-        row(client_id="C002", quantity=-1, price=100),  # negative quantity
+        row(client_id="C002", quantity="abc", price=100),  # non-numeric → structural
     ]
     resp = await client.post(
         "/api/v1/upload-transactions",
@@ -110,6 +117,40 @@ async def test_upload_invalid_row_returns_422_and_does_not_persist(client: Async
     # Nothing should have been written — uploads list is empty.
     uploads_resp = await client.get("/api/v1/uploads", headers=auth_header())
     assert uploads_resp.json() == []
+
+
+async def test_upload_non_positive_value_succeeds_and_flags_invalid_value(
+    client: AsyncClient,
+) -> None:
+    """
+    Assignment Part D: `Price or Quantity < 0` is an INVALID_VALUE violation
+    (severity ERROR), NOT a reason to reject the upload. The row is stored
+    in the transactions table for audit; the violation appears in the
+    violations endpoint; FIFO ignores the row so no bogus positions appear.
+    """
+    rows = [
+        row(client_id="C001", isin="ISIN_A", action="Buy", quantity=10, price=100),
+        row(client_id="C001", isin="ISIN_A", action="Sell", quantity=10, price=-50),  # bad price
+        row(client_id="C002", isin="ISIN_B", action="Buy", quantity=-5, price=100),  # bad qty
+    ]
+    upload = await client.post(
+        "/api/v1/upload-transactions",
+        files=upload_files(make_xlsx(rows)),
+        headers=auth_header(),
+    )
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["summary"]["transactions_loaded"] == 3
+
+    violations_resp = await client.get(
+        "/api/v1/violations",
+        headers=auth_header(),
+        params={"violation_type": "INVALID_VALUE"},
+    )
+    assert violations_resp.status_code == 200
+    invalid = violations_resp.json()
+    assert len(invalid) == 2
+    assert {v["severity"] for v in invalid} == {"ERROR"}
+    assert {v["client_id"] for v in invalid} == {"C001", "C002"}
 
 
 async def test_upload_missing_columns_returns_422(client: AsyncClient) -> None:

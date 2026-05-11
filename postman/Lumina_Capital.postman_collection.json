@@ -1,0 +1,180 @@
+{
+  "info": {
+    "name": "Lumina Capital — Transactions Platform",
+    "description": "All seven endpoints from SPEC §4. Every request carries X-Session-Token: <corporate-email> — the collection sends the value of the `email` variable automatically. Set `baseUrl` and `email` in the collection variables tab (or override per environment).\n\n## Try this order\n1. **POST /upload-transactions** with a sample from `samples/` — capture the returned `upload_id`.\n2. **GET /uploads** to see the file in history.\n3. **GET /clients** to list clients in the active upload.\n4. **GET /clients/:client_id/positions** for one client's positions.\n5. **GET /violations** (try the type filter).\n6. **GET /analytics** for the dashboard payload.\n7. **PUT /users/me/last-viewed** to switch the active upload — instant flag flip, no pipeline re-run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "eliranovadia7@gmail.com",
+      "type": "string"
+    },
+    {
+      "key": "uploadId",
+      "value": "1",
+      "type": "string",
+      "description": "Captured automatically by the POST /upload-transactions test script."
+    },
+    {
+      "key": "clientId",
+      "value": "C001",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-Session-Token", "type": "string" },
+      { "key": "value", "value": "{{email}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "POST  /upload-transactions",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": [],
+              "description": "Pick an .xlsx from samples/ — e.g. 01_valid_clean.xlsx"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/upload-transactions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "upload-transactions"]
+        },
+        "description": "Ingest a .xlsx. Returns 200 with `{upload_id, summary}` on success, 422 with `rejected_rows` on structural failure (missing column, bad action, non-numeric, missing field). Non-positive quantity/price is NOT a structural failure — it returns 200 with an INVALID_VALUE violation. Max 10MB."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  if (body.upload_id) {",
+              "    pm.collectionVariables.set('uploadId', String(body.upload_id));",
+              "    console.log('captured uploadId =', body.upload_id);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "GET  /uploads",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/uploads",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "uploads"]
+        },
+        "description": "List every upload in the shared pool, newest first. `is_last_viewed` is computed per-user against `users.last_viewed_upload_id`."
+      }
+    },
+    {
+      "name": "PUT  /users/me/last-viewed",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"upload_id\": {{uploadId}}\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/users/me/last-viewed",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "users", "me", "last-viewed"]
+        },
+        "description": "Switch the active upload for the current user. Instant — no pipeline re-run; the results for that upload were stored at upload time (ADR 014). Returns the same summary shape as POST /upload-transactions. 404 if the upload doesn't exist."
+      }
+    },
+    {
+      "name": "GET  /clients",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/clients",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "clients"]
+        },
+        "description": "One row per client in the active upload, with transaction/position/violation counts. Empty list if the user hasn't selected an upload yet."
+      }
+    },
+    {
+      "name": "GET  /clients/:client_id/positions",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/clients/{{clientId}}/positions",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "clients", "{{clientId}}", "positions"],
+          "variable": [
+            { "key": "client_id", "value": "{{clientId}}" }
+          ]
+        },
+        "description": "Every position for one client in the active upload: quantity, avg_cost, realized_pnl, unrealized_pnl, last_price. 404 if no active upload is selected or the client doesn't exist in it."
+      }
+    },
+    {
+      "name": "GET  /violations",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/violations?violation_type=&client_id=",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "violations"],
+          "query": [
+            {
+              "key": "violation_type",
+              "value": "",
+              "description": "Optional: INVALID_VALUE | SELL_BEFORE_BUY | DAY_TRADING | RISK_CONCENTRATION"
+            },
+            {
+              "key": "client_id",
+              "value": "",
+              "description": "Optional: filter by a single client"
+            }
+          ]
+        },
+        "description": "Violations for the active upload. Both filters are optional and combine with AND."
+      }
+    },
+    {
+      "name": "GET  /analytics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/analytics",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "analytics"]
+        },
+        "description": "Dashboard payload for the active upload: top_traded_isins, avg_holding_time_per_client, most_volatile_client, isin_concentration (+ win_rate bonus)."
+      }
+    }
+  ]
+}

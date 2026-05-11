@@ -114,8 +114,9 @@ def _simulate_portfolio_extremes(
 
     Complexity: O(n × c) — every transaction triggers a full pass over the
     `clients` set. Acceptable at assignment scale (≤ 200k rows × ~hundreds
-    of clients); see `docs/PRODUCTION_ROADMAP.md` for the index-based
-    optimisation when this becomes a bottleneck.
+    of clients). An inverted `isin → set[holders]` index would collapse the
+    inner loop to O(holders-per-ISIN); deferred until profiling shows this
+    walk as a hot path.
     """
     holdings: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
     last_prices: dict[str, Decimal] = {}

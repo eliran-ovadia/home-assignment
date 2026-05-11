@@ -1,188 +1,139 @@
 # Production Roadmap
 
-Features and architectural improvements that are out of scope for the assignment but represent the natural evolution of this system toward production readiness. These were identified and discussed during the design phase.
-
-Each item includes why it was deferred and what it would take to implement.
-
----
-
-## 1. Concurrent Upload Handling — Message Queue
-
-**Current:** PostgreSQL advisory lock serialises uploads. A second upload while one is in progress returns HTTP 409.
-
-**Production:** Replace the synchronous processing model with a task queue (Celery + Redis).
-- `POST /upload-transactions` saves the file and returns a job ID immediately (HTTP 202 Accepted)
-- A Celery worker processes the file asynchronously
-- Client polls `GET /api/v1/jobs/{job_id}` for status, or uses a WebSocket for push notification
-- Multiple workers can process different uploads in parallel (uploads for different datasets)
-
-**Why deferred:** Adds Celery, Redis, and a job-status table to the infrastructure. Significant complexity for a demo that expects one user and one upload at a time.
+Five upgrades that are out of scope for the assignment but represent the
+real next steps for a production rollout. Each entry states the current
+state of the codebase, the production target, and why the upgrade was
+deferred.
 
 ---
 
-## 2. Async Database I/O
+## 1. SSO / OIDC Authentication
 
-**Current:** Synchronous SQLAlchemy with `psycopg2`. FastAPI runs sync route handlers in a thread pool (correct and safe, but not maximally efficient).
+**Current.** Every request carries `X-Session-Token: <corporate-email>`,
+validated as an email at the API boundary. The deployment context is a
+corporate intranet behind an existing IdP, so the email is treated as a
+Remote-User-style forward from the trusted perimeter rather than as a
+verified credential. See SPEC §0 and ADR 016.
 
-**Production:** Async SQLAlchemy with `asyncpg` driver.
-- `async def` route handlers
-- `AsyncSession` instead of `Session`
-- True async DB calls — no thread pool overhead
-- Enables higher throughput under concurrent load
+**Production.** Replace the header trust with a signed token from the
+corporate IdP (Microsoft Entra ID, Okta, Auth0 — OIDC / SAML). The only
+code that changes is `src/api/deps.py::get_current_user`: it stops
+reading `X-Session-Token` directly and starts reading the verified
+claim from the JWT (validated against the IdP's JWKS). Add per-user
+audit logging on `users` writes. Optionally introduce role-based access
+control (admin / viewer) if the business case requires it.
 
-**Why deferred:** Async SQLAlchemy requires different session management patterns and adds code complexity that would distract from the core business logic in a review context.
-
----
-
-## 3. Faster Excel Parsing
-
-**Current:** `openpyxl` in `read_only=True` streaming mode. Pure Python XML parsing — adequate for hundreds of thousands of rows but becomes a bottleneck beyond that.
-
-**Production:** Replace with `python-calamine` — Python bindings for the Rust-based `calamine` library. 10–100× faster than openpyxl for large files. Drop-in replacement for reading; no API changes required.
-
-**Why deferred:** openpyxl is the standard library, available in every Python environment. `python-calamine` is a binary dependency that requires Rust toolchain for compilation and adds Docker image complexity.
-
----
-
-## 4. Parallel FIFO Computation
-
-**Current:** FIFO engine processes `(client_id, isin)` pairs sequentially in a single thread.
-
-**Production:** Each `(client_id, isin)` pair is fully independent — this is an embarrassingly parallel workload. Use `concurrent.futures.ProcessPoolExecutor` to distribute pairs across CPU cores.
-- For N cores and M pairs, runtime drops from O(M) to O(M/N)
-- Bypasses the GIL (separate processes, not threads)
-- Results are merged after all workers complete
-
-**Why deferred:** For realistic assignment datasets (hundreds of pairs), process spawn overhead exceeds computation time. Useful only at tens of thousands of pairs or more.
+**Why deferred.** Standing up an IdP integration requires an IdP. The
+email-as-identity model is the smallest scheme that supports the
+"recognise the user across devices" requirement while keeping the
+production migration path to one function.
 
 ---
 
-## 4a. Portfolio-Value Simulation Indexing
+## 2. Asynchronous Upload Queue
 
-**Current:** `src/domain/analytics.py`'s `_simulate_portfolio_extremes` revalues *every* client's portfolio after *every* transaction — O(n × c) where n is transaction count and c is client count. At assignment scale (≤ 200k rows × ~hundreds of clients) this is acceptable: even 200,000 × 500 = 100M `Decimal` operations runs in single-digit seconds.
+**Current.** `POST /upload-transactions` is synchronous (ADR 013): the
+HTTP connection is held open for the full pipeline — parse, validate,
+FIFO, detectors, analytics, DB insert. A 10 MB / 200 k-row upload can
+take meaningful wall-clock time, and the client has no progress
+feedback. There is no application-level lock, so concurrent uploads
+from different users do not block each other, but a single user's
+upload still blocks one HTTP worker per upload.
 
-**Production:** maintain an inverted index `isin → set[client_id holding it]` alongside the holdings dictionary. After each transaction, only the *trading* client (whose holdings just changed) and the clients in `isin_holders[tx.isin]` (whose mark-to-market value moved because the price moved) need revaluation. For sparse portfolios this collapses the inner loop from O(c) to O(holders-per-ISIN), often a handful instead of hundreds.
+**Production.** Move the pipeline to a job queue (Celery + Redis, or
+RQ). The endpoint changes to:
 
-**Why deferred:** Adds bookkeeping (insert into / remove from the index every time a client's holding for an ISIN crosses zero) for a constant-factor win at this scale. Justified once the analytics walk shows up on a profile.
+- `POST /upload-transactions` saves the bytes, enqueues a job, and
+  returns `202 Accepted` with a job ID.
+- Workers process uploads off-thread; multiple workers run in parallel.
+- `GET /api/v1/jobs/{job_id}` exposes status; a WebSocket or SSE channel
+  pushes progress events.
+- The frontend renders a progress bar; users can navigate away and come
+  back.
 
----
-
-## 5. Aggregate Upload Mode
-
-**Current:** Each upload replaces all existing data (replace-on-upload, ADR 009). The system analyses one file at a time.
-
-**Production:** Transactions accumulate across uploads — every upload appends to the ledger rather than replacing it. Positions and violations are recomputed incrementally from the full transaction history.
-
-Key changes required:
-- `transactions.upload_id` foreign key to `uploads`
-- FIFO engine must re-run only for `(client_id, isin)` pairs affected by the new upload
-- Deduplication by `transaction_id` to prevent double-counting re-uploaded rows
-- `GET /api/v1/clients/{id}/positions` computes from the full history, not just the last file
-
-**Why deferred:** Cross-upload FIFO introduces ordering complexity and makes the system stateful in ways that are hard to test and debug. Replace-on-upload is the correct scope for a demo tool.
-
----
-
-## 5a. Streaming File Upload + Decompression Guards
-
-**Current:** `src/api/routes/upload.py` reads the entire request body into memory with `await file.read()`, then checks the 10 MB cap. The parser runs openpyxl in `read_only=True` mode (streaming inside the workbook) on the buffered bytes. Acceptable at the corporate-intranet scale and the 10 MB ceiling, but two production-shaped concerns remain:
-
-1. **Whole-file buffering before the size check.** A client can transmit up to 10 MB into the server's RAM before we know it's too big (more, briefly, with backpressure). Under concurrent load the per-request memory cost is bounded but not minimal. A streaming read that increments a counter chunk-by-chunk and aborts the request at the first byte past the cap would be more robust:
-
-   ```python
-   chunks, total = [], 0
-   async for chunk in file.stream():
-       total += len(chunk)
-       if total > MAX_FILE_BYTES:
-           raise HTTPException(413, "File exceeds the 10MB limit")
-       chunks.append(chunk)
-   content = b"".join(chunks)
-   ```
-
-2. **Zip-bomb risk.** `.xlsx` is a zip archive. A maliciously compressed 10 MB file can expand to hundreds of MB. `read_only=True` mitigates by streaming inside the workbook, but openpyxl still incrementally decompresses the underlying zip. Hard caps available on the production path:
-   - `zipfile.ZipFile` introspection before handing the bytes to openpyxl: sum of `ZipInfo.file_size` (uncompressed) must be under a ceiling (e.g. 200 MB).
-   - Wall-clock budget on the parse via a worker process (not `asyncio.wait_for` on a thread — that cancels the *wait*, not the running thread; CPython has no portable way to kill a thread mid-call).
-
-**Why deferred:** the 10 MB cap is the primary defense and is sufficient at the assignment scale and target deployment context (authenticated corporate users on managed devices, not the public internet). Both upgrades — streaming read and zip-introspection — are mechanical changes that don't affect the route's contract.
+**Why deferred.** Adds Redis + a worker process + a `jobs` table. The
+synchronous model is correct at assignment scale; this is the upgrade
+that unlocks larger files and concurrent uploads-per-user without
+timing out HTTP connections.
 
 ---
 
-## 6. Authentication & Authorisation
+## 3. Managed Secrets Store
 
-**Current:** No authentication. The API is open — anyone with network access can upload files and read all client data.
+**Current.** `pydantic-settings` reads `.env` locally and OS env vars in
+CI / Docker. The DB password is held in `pydantic.SecretStr`, which
+redacts it from `repr` and accidental log output but provides no
+rotation, no audit trail, and no per-environment access control.
 
-**Production:**
-- JWT-based authentication (FastAPI `python-jose` + `passlib`)
-- Role-based access control: `admin` can upload, `viewer` can only query
-- Per-client data isolation: a client user can only see their own positions/violations
-- API key support for programmatic access
-- Rate limiting on the upload endpoint (e.g. max 10 uploads per hour per user)
+**Production.** Move secrets out of env vars and into a managed store:
 
-**Why deferred:** Out of scope for the assignment. Would be the first feature added before any real deployment.
+| Cloud | Service | Client |
+|---|---|---|
+| AWS | Secrets Manager / SSM Parameter Store | `boto3` |
+| GCP | Secret Manager | `google-cloud-secret-manager` |
+| Self-hosted | HashiCorp Vault | `hvac` |
 
----
+Implementation shape: introduce a `SecretsProvider` Protocol in
+`src/core/` (single method, `get(key) -> SecretStr`). The default
+implementation reads from `Settings`; the production implementation
+reads from the chosen store. `Settings.db_password` becomes a property
+that resolves through the provider at request time rather than at
+import time, enabling rotation without restart.
 
-## 7. Secrets Management — Cloud Provider
-
-**Current:** `pydantic-settings` reads `.env` for local development; GitHub Actions Secrets are injected as env vars in CI; `docker-compose.yml` forwards the password from the host shell. The DB password is held in `pydantic.SecretStr`, which keeps it out of `repr` and accidental log output but does not provide rotation, audit trails, or per-environment access control.
-
-**Production:** Move sensitive values out of env vars and into a managed secrets store:
-- AWS: `boto3` + AWS Secrets Manager (or SSM Parameter Store)
-- GCP: `google-cloud-secret-manager`
-- HashiCorp Vault: `hvac` client
-
-The cleanest implementation path is to introduce a small `SecretsProvider` Protocol in `src/core/` (one method, `get(key) -> SecretStr`) with the default reading from settings and a production implementation reading from the chosen store. `Settings.db_password` would then be populated from that provider during `init_db()` rather than at import time. This is a deliberate non-decision for the assignment scope — the abstraction was prototyped early in the project and removed once it became clear it added a layer that wasn't earning its keep without a real backend behind it.
-
-**Why deferred:** Production secrets infrastructure is environment-specific (which cloud, which IAM model, which rotation policy). For the assignment, env-driven configuration is the right scope; the migration path is well understood and small.
+**Why deferred.** Choice of secrets store is environment-specific
+(which cloud, which IAM model, which rotation policy). The migration
+path is well understood and the change surface is small.
 
 ---
 
-## 8. Analytics Caching
+## 4. Observability
 
-**Current:** Some analytics are precomputed at upload time (`client_analytics` table). Top ISINs and ISIN concentration are computed live on every `GET /analytics` call.
+**Current.** Standard uvicorn access logs to stdout. No structured
+logging, no metrics, no tracing, no health endpoint.
 
-**Production:** Cache the full analytics response in Redis with a short TTL (e.g. 60 seconds). Invalidate the cache key on every successful upload or activation.
-- Near-zero latency for repeated analytics queries
-- Cache key: `analytics:current` (or `analytics:{upload_id}`)
-- Fallback to live computation if Redis is unavailable
+**Production.**
 
-**Why deferred:** Adds Redis as a runtime dependency. Analytics queries are fast enough on realistic datasets without caching.
+- **Structured JSON logs** via `structlog` — machine-parseable, filterable
+  by request ID / user ID / upload ID.
+- **Distributed tracing** with OpenTelemetry — a single trace spans API
+  route → domain layer → DB calls, making slow-upload investigations
+  trivial.
+- **Metrics** exported in Prometheus format: request latency, upload
+  processing time, violation counts per type, queue depth. Visualised
+  in Grafana; alerted on via Alertmanager.
+- **`GET /health`** that returns DB connectivity and (in production)
+  queue connectivity. Wired into the orchestrator's liveness probe.
+- **Sentry** (or equivalent) for unhandled-exception capture with stack
+  traces and breadcrumbs.
 
----
-
-## 9. File Size and Row Count Scaling
-
-**Current:** 10MB file size limit, 200,000 row limit. Sufficient for realistic financial transaction samples.
-
-**Production path:**
-- Increase file size limit to 100MB+ (requires streaming upload, not full file buffering)
-- Remove row count limit — rely on processing time SLA instead
-- Combine with items 1 (queue) and 3 (calamine) to make large file processing non-blocking and fast
-- Store files in object storage (S3, GCS) instead of PostgreSQL BYTEA for files over 50MB
-
-**Why deferred:** Requires the queue architecture from item 1. Without async processing, large files would time out HTTP connections.
-
----
-
-## 10. Observability
-
-**Current:** Standard uvicorn access logs only.
-
-**Production:**
-- Structured JSON logging (via `structlog`) — machine-parseable, filterable
-- Request tracing (OpenTelemetry) — trace a request from API → domain → DB
-- Metrics (Prometheus + Grafana) — request latency, upload processing time, violation counts
-- Health check endpoint (`GET /health`) returning DB connectivity and processing status
-- Alerting on upload failures or anomalous violation rates
-
-**Why deferred:** Observability infrastructure is environment-specific and out of scope for a local demo.
+**Why deferred.** Observability infrastructure is environment-specific
+and adds runtime dependencies. None of these changes require code
+restructuring — they're additive.
 
 ---
 
-## 11. Incremental Position Recomputation
+## 5. Aggregate Ledger Mode
 
-**Current:** Every upload (or activation) recomputes positions for all clients across all ISINs from scratch.
+**Current.** Each upload is processed as its own independent dataset
+(ADR 009 / ADR 014). Past uploads are preserved on disk and in the
+results tables, but switching between them via
+`PUT /users/me/last-viewed` shows the single file's view — there is no
+cross-upload reconciliation.
 
-**Production (aggregate mode only):** When a new upload adds transactions, only recompute positions for the `(client_id, isin)` pairs that appear in the new file. Unaffected pairs carry their existing computed values forward.
+**Production.** Treat transactions as an append-only ledger that
+accumulates across uploads. Concrete changes:
 
-**Why deferred:** Only meaningful in aggregate mode (item 5). In replace-on-upload mode, a full recompute is always necessary.
+- A new upload deduplicates rows by `(transaction_id)` against the
+  existing ledger before processing.
+- FIFO re-runs only for the `(client_id, ISIN)` pairs touched by the
+  new upload, carrying unaffected positions forward.
+- `GET /clients/{id}/positions` computes from the full history, not
+  the most recent upload.
+- A separate `POST /api/v1/uploads/{id}/revert` endpoint removes one
+  upload's contribution from the ledger and recomputes affected pairs.
+
+**Why deferred.** Cross-upload FIFO introduces subtle ordering issues
+(transactions with overlapping timestamps in different files, what to
+do when re-uploading a corrected file). Replace-on-upload is the right
+scope for the assignment; aggregate mode is the next product step once
+the user base needs continuity rather than isolated runs.

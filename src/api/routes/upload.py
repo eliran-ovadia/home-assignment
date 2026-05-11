@@ -4,11 +4,16 @@
 Flow (all inside one DB transaction once we reach the bulk-insert step):
   1. Guard the request (size limit, file extension/content-type).
   2. Parse the workbook bytes into `RawRow`s — CPU-bound, off the event loop.
-  3. Validate every row — also CPU-bound.
-     • Any errors → return 422 with the rejected_rows list. Nothing written.
-  4. Run the FIFO engine and the two violation detectors — CPU-bound.
-  5. Compute per-client analytics — CPU-bound.
-  6. Begin DB transaction:
+  3. Validate every row's structure — also CPU-bound.
+     • Any structural error → return 422 with the rejected_rows list. Nothing
+       written. (Structural = wrong type, missing column/field, bad action.)
+  4. Partition rows by value validity. Rows with quantity ≤ 0 or price ≤ 0
+     become INVALID_VALUE violations (severity ERROR) but the upload still
+     proceeds — they're persisted to `transactions` for audit and excluded
+     from FIFO/analytics. This matches the assignment's Part D rule matrix.
+  5. Run the FIFO engine and the violation detectors — CPU-bound.
+  6. Compute per-client analytics — CPU-bound.
+  7. Begin DB transaction:
         a. Insert the `uploads` row → get `upload_id`.
         b. Bulk-insert transactions / positions / violations / client_analytics.
         c. Update `users.last_viewed_upload_id` for the current user.
@@ -49,7 +54,11 @@ from src.domain.models import (
     ValidatedRow,
     ViolationRecord,
 )
-from src.domain.violations import detect_day_trading, detect_risk_concentration
+from src.domain.violations import (
+    detect_day_trading,
+    detect_invalid_values,
+    detect_risk_concentration,
+)
 from src.ingestion.parser import HeaderValidationError, parse_workbook
 from src.ingestion.validator import validate_rows
 
@@ -107,14 +116,27 @@ async def upload_transactions(
             detail="Workbook contains a header row but no data rows",
         )
 
-    fifo_result = await asyncio.to_thread(run_fifo, valid_rows)
-    day_trading = await asyncio.to_thread(detect_day_trading, valid_rows)
-    risk_concentration = await asyncio.to_thread(detect_risk_concentration, fifo_result.positions)
-    client_analytics = await asyncio.to_thread(
-        compute_client_analytics, valid_rows, fifo_result.completed_trades
+    # Partition rows by value validity before any domain math touches them.
+    # `eligible_rows` is what FIFO / day-trading / analytics see; the original
+    # `valid_rows` (eligible + invalid-value) is still what gets persisted to
+    # the transactions table for audit. See `detect_invalid_values` docstring.
+    eligible_rows, invalid_value_violations = await asyncio.to_thread(
+        detect_invalid_values, valid_rows
     )
 
-    all_violations = list(fifo_result.sell_before_buy_violations) + day_trading + risk_concentration
+    fifo_result = await asyncio.to_thread(run_fifo, eligible_rows)
+    day_trading = await asyncio.to_thread(detect_day_trading, eligible_rows)
+    risk_concentration = await asyncio.to_thread(detect_risk_concentration, fifo_result.positions)
+    client_analytics = await asyncio.to_thread(
+        compute_client_analytics, eligible_rows, fifo_result.completed_trades
+    )
+
+    all_violations = (
+        invalid_value_violations
+        + list(fifo_result.sell_before_buy_violations)
+        + day_trading
+        + risk_concentration
+    )
 
     # Single DB transaction. Any failure rolls everything back (the
     # AsyncSession dependency rolls back on exception by default).

@@ -63,13 +63,16 @@ COPY --from=frontend-builder /build/dist ./frontend/dist
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY alembic.ini ./
-COPY docker-entrypoint.sh ./
 
-RUN chmod +x docker-entrypoint.sh && chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app
 
 USER appuser
 
 EXPOSE 8000
 
-# Entrypoint runs `alembic upgrade head` before exec'ing uvicorn.
-ENTRYPOINT ["./docker-entrypoint.sh"]
+# Default command: serve the API. The `migrate` service in docker-compose.yml
+# overrides this with `alembic upgrade head` to run as a one-shot before the
+# `app` service starts — same image, two roles. Running this image without
+# compose (`docker run …`) will start uvicorn directly; migrate manually
+# beforehand if the schema isn't already at head.
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
