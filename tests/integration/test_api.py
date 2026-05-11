@@ -10,7 +10,9 @@ compose correctly.
 
 from __future__ import annotations
 
-from httpx import AsyncClient
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from tests.integration.conftest import (
     DEFAULT_USER_EMAIL,
@@ -182,13 +184,16 @@ async def test_get_client_positions_returns_correct_pnl(client: AsyncClient) -> 
     assert resp.status_code == 200
     by_isin = {p["isin"]: p for p in resp.json()}
 
-    # ISIN_A: bought 10 @ 100, sold 10 @ 120 → realized 200, position 0
-    assert by_isin["ISIN_A"]["realized_pnl"] == "200.000000"
-    assert by_isin["ISIN_A"]["quantity"] == "0.000000"
+    # ISIN_A: bought 10 @ 100, sold 10 @ 120 → realized 200, position 0.
+    # Compare as floats so the test survives Decimal-vs-float schema changes
+    # (the current Pydantic schema serializes Decimal as "200.000000" but
+    # that's brittle to assert against literally).
+    assert float(by_isin["ISIN_A"]["realized_pnl"]) == pytest.approx(200.0)
+    assert float(by_isin["ISIN_A"]["quantity"]) == pytest.approx(0.0)
 
     # ISIN_B: bought 5 @ 50, never sold → quantity 5, no realized PnL
-    assert by_isin["ISIN_B"]["quantity"] == "5.000000"
-    assert by_isin["ISIN_B"]["realized_pnl"] == "0.000000"
+    assert float(by_isin["ISIN_B"]["quantity"]) == pytest.approx(5.0)
+    assert float(by_isin["ISIN_B"]["realized_pnl"]) == pytest.approx(0.0)
 
 
 async def test_get_positions_unknown_client_returns_404(client: AsyncClient) -> None:
@@ -218,6 +223,101 @@ async def test_get_violations_filter_by_type(client: AsyncClient) -> None:
     assert all("DAY_TRADING" not in v["violation_type"] for v in resp.json())
 
 
+async def test_day_trading_violation_emitted_end_to_end(client: AsyncClient) -> None:
+    """
+    Four distinct ISINs with both a Buy and a Sell inside a single 24h
+    window → DAY_TRADING is flagged once for the client. Proves the
+    DAY_TRADING detector reaches the violations endpoint through the
+    full pipeline.
+    """
+    rows = []
+    for i, isin in enumerate(("ISIN_A", "ISIN_B", "ISIN_C", "ISIN_D")):
+        rows.append(
+            row(
+                client_id="C001",
+                isin=isin,
+                action="Buy",
+                quantity=10,
+                price=100,
+                timestamp=ts(day=1, hour=9, minute=i * 10),
+            )
+        )
+        rows.append(
+            row(
+                client_id="C001",
+                isin=isin,
+                action="Sell",
+                quantity=10,
+                price=120,
+                timestamp=ts(day=1, hour=10, minute=i * 10),
+            )
+        )
+    upload = await client.post(
+        "/api/v1/upload-transactions",
+        files=upload_files(make_xlsx(rows)),
+        headers=auth_header(),
+    )
+    assert upload.status_code == 200, upload.text
+
+    resp = await client.get(
+        "/api/v1/violations",
+        headers=auth_header(),
+        params={"violation_type": "DAY_TRADING"},
+    )
+    assert resp.status_code == 200
+    violations = resp.json()
+    assert len(violations) == 1
+    assert violations[0]["client_id"] == "C001"
+    assert violations[0]["severity"] == "FLAG"
+
+
+async def test_risk_concentration_violation_emitted_end_to_end(
+    client: AsyncClient,
+) -> None:
+    """
+    A client with 80% of portfolio market value in one ISIN → RISK_CONCENTRATION
+    surfaces on the violations endpoint with severity WARNING.
+    """
+    rows = [
+        # ISIN_A: quantity 80 × last_price 100 = 8000 (80% of total)
+        row(
+            client_id="C001",
+            isin="ISIN_A",
+            action="Buy",
+            quantity=80,
+            price=100,
+            timestamp=ts(day=1, hour=9),
+        ),
+        # ISIN_B: quantity 20 × last_price 100 = 2000 (20% of total)
+        row(
+            client_id="C001",
+            isin="ISIN_B",
+            action="Buy",
+            quantity=20,
+            price=100,
+            timestamp=ts(day=1, hour=10),
+        ),
+    ]
+    upload = await client.post(
+        "/api/v1/upload-transactions",
+        files=upload_files(make_xlsx(rows)),
+        headers=auth_header(),
+    )
+    assert upload.status_code == 200, upload.text
+
+    resp = await client.get(
+        "/api/v1/violations",
+        headers=auth_header(),
+        params={"violation_type": "RISK_CONCENTRATION"},
+    )
+    assert resp.status_code == 200
+    violations = resp.json()
+    assert len(violations) == 1
+    assert violations[0]["client_id"] == "C001"
+    assert violations[0]["isin"] == "ISIN_A"
+    assert violations[0]["severity"] == "WARNING"
+
+
 async def test_get_violations_filter_by_client(client: AsyncClient) -> None:
     await _seed_happy_path(client)
     resp = await client.get(
@@ -242,8 +342,22 @@ async def test_get_analytics_returns_all_four_sections(client: AsyncClient) -> N
         "isin_concentration",
     ):
         assert key in body
-    # Top ISINs: each ISIN was traded at most twice — we should see at least one entry.
-    assert len(body["top_traded_isins"]) >= 1
+
+    # Value assertions — proves the data is correctly threaded through the
+    # whole pipeline, not just that the response shape is right.
+
+    # Top traded ISIN should be ISIN_A (2 transactions: buy + sell).
+    top = {entry["isin"]: entry["transaction_count"] for entry in body["top_traded_isins"]}
+    assert top["ISIN_A"] == 2
+
+    # C001 has exactly one completed trade (bought day 1, sold day 2 → 1 day).
+    holding = {
+        entry["client_id"]: entry["avg_holding_days"]
+        for entry in body["avg_holding_time_per_client"]
+    }
+    assert float(holding["C001"]) == pytest.approx(1.0)
+    # C002 only attempted a SELL_BEFORE_BUY — no completed trades → null.
+    assert holding["C002"] is None
 
 
 # ── upload history / last-viewed semantics (the ADR 016 surface) ─────────────
@@ -355,6 +469,41 @@ async def test_two_users_see_same_uploads_but_independent_last_viewed(client: As
     assert bob_by_id[alice_second_id]["is_last_viewed"] is False
     assert alice_by_id[alice_second_id]["is_last_viewed"] is True
     assert alice_by_id[alice_first_id]["is_last_viewed"] is False
+
+
+async def test_returning_user_on_fresh_client_sees_last_viewed_restored(
+    app: FastAPI,
+) -> None:
+    """
+    SPEC §7: "Returning user (same email on a fresh device) sees their
+    last_viewed_upload_id restored."
+
+    Instantiates two independent `AsyncClient`s against the same app. The
+    first uploads as alice; the second — created from scratch, no shared
+    state — sends only her email and reads her preferences back. Proves
+    that identity follows the email, not the HTTP client object.
+    """
+    transport = ASGITransport(app=app)
+
+    # First "device": Alice uploads.
+    async with AsyncClient(transport=transport, base_url="http://test") as cli1:
+        upload = await cli1.post(
+            "/api/v1/upload-transactions",
+            files=upload_files(make_xlsx(_happy_path_rows())),
+            headers=auth_header(),
+        )
+        assert upload.status_code == 200
+        upload_id = upload.json()["upload_id"]
+
+    # Second "device": brand-new client, same email. Should see Alice's
+    # last_viewed_upload_id pointing at the upload she made on the first.
+    async with AsyncClient(transport=transport, base_url="http://test") as cli2:
+        listing = await cli2.get("/api/v1/uploads", headers=auth_header())
+        assert listing.status_code == 200
+        items = listing.json()
+        assert len(items) == 1
+        assert items[0]["id"] == upload_id
+        assert items[0]["is_last_viewed"] is True
 
 
 async def test_get_uploads_for_user_with_no_uploads_returns_empty_list(

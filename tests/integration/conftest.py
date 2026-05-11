@@ -116,6 +116,19 @@ HEADER_ROW: list[str] = [
     "Timestamp",
 ]
 
+# Header → row-dict key mapping. Writing row data by looking up each column's
+# key from this map (rather than relying on positional order matching
+# HEADER_ROW) means reordering HEADER_ROW can't silently misalign the data.
+_HEADER_TO_KEY: dict[str, str] = {
+    "ClientId": "client_id",
+    "TransactionId": "transaction_id",
+    "ISIN": "isin",
+    "Action": "action",
+    "Quantity": "quantity",
+    "Price": "price",
+    "Timestamp": "timestamp",
+}
+
 
 def make_xlsx(
     rows: list[dict[str, Any]] | None = None,
@@ -126,24 +139,18 @@ def make_xlsx(
     Build an in-memory `.xlsx` workbook with the standard SPEC §5.1 header and
     the supplied data rows. `header=None` uses the canonical header; pass a
     different list to exercise the "wrong columns" path.
+
+    Row data is written in the same order as *header*, looked up via
+    `_HEADER_TO_KEY` — so reordering `HEADER_ROW` (or passing a custom
+    subset header) doesn't silently misalign data with column names.
     """
     workbook = Workbook()
     worksheet = workbook.active
     if header is None:
         header = HEADER_ROW
     worksheet.append(header)
-    for row in rows or []:
-        worksheet.append(
-            [
-                row["client_id"],
-                row["transaction_id"],
-                row["isin"],
-                row["action"],
-                row["quantity"],
-                row["price"],
-                row["timestamp"],
-            ]
-        )
+    for r in rows or []:
+        worksheet.append([r[_HEADER_TO_KEY[col]] for col in header])
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
