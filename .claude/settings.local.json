@@ -26,7 +26,16 @@
       "Bash(npm --version)",
       "Bash(npm install *)",
       "Bash(npm run *)",
-      "Bash(timeout 12 npx vite --port 5173)"
+      "Bash(timeout 12 npx vite --port 5173)",
+      "Bash(docker compose *)",
+      "Bash(DB_PASSWORD=docker_test_pw docker compose up -d --build)",
+      "Bash(curl -sf http://localhost:8000/api/openapi.json)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\nContent-Type: %{content_type}\\\\n\" http://localhost:8000/api/docs)",
+      "Bash(curl -s -H \"X-Session-Token: alice@lumina.example\" http://localhost:8000/api/v1/uploads)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/api/openapi.json)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}, Content-Type: %{content_type}, Size: %{size_download}\\\\n\" http://localhost:8000/assets/index-CVmHG7Nd.js)",
+      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=assignment DB_USER=postgres DB_PASSWORD=docker_test_pw python -m pytest --cov-fail-under=80)"
     ]
   }
 }
