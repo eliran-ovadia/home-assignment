@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "home-assignment"
@@ -12,6 +12,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",  # ORM + async session support (ADR 010)
     "asyncpg>=0.30",             # Async PostgreSQL driver used by AsyncEngine
     "alembic>=1.14",
+    "pydantic[email]>=2.6",      # EmailStr at the API boundary needs email-validator
     "pydantic-settings>=2.6",    # Typed non-sensitive config (ports, log level, etc.)
     "openpyxl>=3.1",             # .xlsx parsing (read_only + data_only streaming)
     "python-multipart>=0.0.20",  # multipart/form-data parsing for FastAPI file uploads

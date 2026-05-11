@@ -577,3 +577,181 @@ A (implementation summary):
    - ADR 015 marked Superseded; new ADR 016 documents the email-as-identity
      decision with full alternatives table
 
+────────────────────────────────────────────────────────────────────────────────
+SESSION 12 — PR 2 SECOND REVIEW & DIFF-CAP RAISE
+────────────────────────────────────────────────────────────────────────────────
+
+Q: PR agent's review feels short for the size of PR 2. The diff was big.
+
+A: scripts/claude_pr_review.py has MAX_DIFF_CHARS = 80_000. PR 2 was
+   noticeably larger; the second half was getting truncated and the
+   reviewer never saw it. With Sonnet 4.6's 1M context the 80k cap is
+   wildly conservative — even a 500k-char diff is ~125k tokens, ~$0.40
+   per review. Raised to 500_000 and re-ran. Four new items surfaced.
+
+Q: PR agent flagged 4 more things. Evaluate.
+
+A: 3 of 4 held up:
+   - get_or_create_by_email's fallback SELECT is safe under READ COMMITTED
+     (asyncpg default) but would break under REPEATABLE READ. Added the
+     isolation assumption to the docstring.
+   - Position model has Python-side default=Decimal(0) and migration has
+     server_default=sa.text("0") — dual-default pattern undocumented.
+     Added a comment block on Position explaining the pair.
+   - get_top_traded_isins returns list but was annotated as Sequence.
+     Inconsistent with the other three list-building analytics functions
+     in the same file. Tightened to list[tuple[str, int]].
+
+   1 rejected: reviewer claimed get_client_summary would miss clients
+   that appear only in violations. False — _ensure_client_row.setdefault
+   creates rows on first sight inside every loop, including the
+   violations one. Reviewer misread the code.
+
+────────────────────────────────────────────────────────────────────────────────
+SESSION 13 — PR 3 IMPLEMENTATION & READABILITY REFACTORS
+────────────────────────────────────────────────────────────────────────────────
+
+Q: implement the next branch (feat/domain-and-ingestion)
+
+A: 7 new source modules, 37 unit tests. All tests pass first try.
+
+   Real infrastructure mistake found during verification: pyproject.toml's
+   --cov-fail-under=80 in addopts was making `pytest tests/unit/` fail
+   unavoidably (unit tests can't reach the DB layer; that's PR 5's
+   territory). Moved the gate from addopts to `make test` only.
+
+Q: look at parser.py, fifo.py, analytics.py — there are very large
+   functions in there. Not maintainable. Refactor with a clearer flow.
+
+A: First refactor pass:
+   - parse_workbook (~55 lines) → 10-line orchestrator + 5 named helpers
+     (_open_workbook contextmanager, _read_header_and_build_index,
+     _parse_data_rows, _is_blank_row, _build_raw_row)
+   - run_fifo (~95 lines) → 20-line orchestrator + a small _PairFIFO
+     dataclass encapsulating per-(client, ISIN) state
+   - compute_client_analytics (~80 lines) → 12-line orchestrator + 6
+     focused helpers + two typed dataclass bundles (_Extremes, _TradeStats)
+
+Q: look at validator.py — lots of if statements, is that conventional?
+   And violations.py — too long? Or just me?
+
+A: Honest assessment:
+   - validator.py: real repetition. 7 identical "call validator, if error
+     append, else collect" blocks. 4-line RowError boilerplate copy-pasted
+     ~10 times. Refactor: _err helper, union-return validators
+     (RowError | T instead of tuple), _take router, _validate_one_row
+     extracted. validate_rows becomes 8 lines. File: 267 → 174 lines.
+   - violations.py / detect_day_trading: refactor — extract
+     _first_day_trading_breach + _sells_in_window + _day_trading_violation.
+     Remove dead `if flagged: continue`.
+   - violations.py / detect_risk_concentration: leave alone — already
+     at the right granularity. Pushback saves work without losing clarity.
+
+Q: How would I defend "why didn't you use classes for this?" in a code
+   review interview?
+
+A: One sentence: "I used classes wherever there's state to hold or a data
+   shape to name. The validator, the day-trading detector, and the
+   analytics walker are pure transformations — no state, no invariants,
+   no polymorphism — so wrapping them in a class would add ceremony
+   without meaning."
+
+   Reference our code: we DID use classes where they fit (_PairFIFO holds
+   mutable per-pair state across many apply() calls; _Lot mutates as
+   sells consume it; _Extremes / _TradeStats are typed bundles; the
+   whole domain/models.py is dataclasses for business concepts; ORM
+   models in db/models.py). The split is consistent: business concepts
+   and stateful processes are classes; stateless operations on them are
+   functions. Python idiom, not anti-class preference.
+
+────────────────────────────────────────────────────────────────────────────────
+SESSION 14 — PR 3 REVIEW CYCLE
+────────────────────────────────────────────────────────────────────────────────
+
+Q: PR agent flagged 10 items. Evaluate each.
+
+A: 9 of 10 held up.
+
+   Two real semantic / correctness catches:
+
+   - Day-trading "pair" was too loose. _sells_in_window counted distinct
+     sell-ISINs in the window without requiring a matching Buy of the
+     same ISIN. Under that rule, "Buy A + sells of B/C/D/E (no buy of
+     B/C/D/E in window)" would have flagged DAY_TRADING — but those are
+     SELL_BEFORE_BUY situations, not day-trading. Tightened to
+     buys ∩ sells (set intersection). SPEC §5.3 pseudocode clarified.
+     New test asserts the corrected behaviour.
+
+   - Analytics min_value baseline was wrong. Initialized to ZERO before
+     any transaction, so a buy-only client whose portfolio rose to $10K
+     and held got `range = $10K` (interpreted as growth, not volatility).
+     SPEC §5.5 says "after every transaction" — pre-trade zero is NOT
+     an observation. Removed the seeding; min/max now lazily initialised
+     on each client's first post-transaction observation. Buy-and-hold
+     now correctly reports range = 0.
+
+   Coverage gap: src/domain/analytics.py had zero unit tests despite
+   being arguably the most complex code in PR 3. Added 11 tests covering
+   buy-only, buy-then-sell, cross-client market propagation, multi-ISIN,
+   oversell, None-stats, win/loss counting, holding days, per-client
+   grouping, empty input, ordering. Test count: 37 → 49.
+
+   Hygiene + docs (6): sanitized HeaderValidationError message (was
+   leaking openpyxl exc text); duplicate column detection in parser;
+   "frozen" wording for FIFOResult (was "immutable"); _group_and_sort
+   docstring distinguishes correctness sort from determinism sort;
+   .idea/dataSources.xml untracked + .gitignore extended; O(n × c)
+   scaling note added to PRODUCTION_ROADMAP.md §4a.
+
+   1 rejected: reviewer claimed the "Duplicated from src.db.models"
+   comment for ACTION_BUY/ACTION_SELL was misleading. Verified — those
+   constants do exist in db/models.py:33-34. Comment is accurate.
+
+────────────────────────────────────────────────────────────────────────────────
+SESSION 15 — PR 4 API LAYER + CI BUILD-BACKEND FIX
+────────────────────────────────────────────────────────────────────────────────
+
+Q: implement the next branch (feat/api-layer)
+
+A: 10 new files in src/api/: schemas.py (Pydantic models), deps.py
+   (get_current_user reads X-Session-Token, validates as EmailStr,
+   resolves via users.get_or_create_by_email — sign-up on first sight,
+   sign-in on subsequent), app.py (factory + lifespan), routes/*.py
+   (all 7 endpoints from SPEC §4). All routes register, app boots,
+   49 unit tests still pass.
+
+   Two mistakes caught during verification:
+
+   - pydantic.EmailStr needs email-validator at runtime. Tried to import
+     the app, got ImportError. Added pydantic[email]>=2.6 to deps.
+   - upload.py had a leftover `_ = FIFOResult, Decimal` line from an
+     earlier draft trying to suppress unused-import warnings. Ruff
+     flagged it; removed both the imports and the placeholder.
+
+Q: CI is always failing the tests and lint jobs — that's why I commented
+   the "needs:" from the PR agent job. Help me see why.
+
+A: Root cause: pyproject.toml line 3, build-backend =
+   "setuptools.backends.legacy:build". That's not a real Python module.
+   `pip install -e ".[dev]"` crashes with `BackendUnavailable: Cannot
+   import 'setuptools.backends.legacy'`. CI runs that pip command as the
+   first step of both lint and test jobs, so neither job ever reaches its
+   actual checks. The typo predates Claude-Code sessions (in the initial
+   commit); a local venv that was hand-built didn't surface the
+   breakage. CI starts from scratch every time, which is where it
+   showed up.
+
+   One-line fix: build-backend = "setuptools.build_meta" (the canonical
+   setuptools backend, stable for years). Verified locally — pip install
+   succeeds, ruff / ruff format / ty / pytest all pass on a fresh install.
+
+   Re-enabled `needs: [lint, test]` on the review job so the Anthropic
+   API call only fires after the gate actually passes.
+
+   Lesson recorded in AI_USAGE.md: when the working venv already has the
+   package installed in dev mode, a broken build-backend is invisible —
+   "works on my machine" failure mode. Next pyproject.toml change should
+   include `pip install -e ".[dev]"` from a clean venv as a verification
+   step.
+
+
