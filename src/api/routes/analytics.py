@@ -10,10 +10,11 @@ data").
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
-from typing import Any
 
 from fastapi import APIRouter
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import CurrentUserDep, SessionDep
 from src.api.schemas import (
@@ -68,7 +69,7 @@ def _empty_response() -> AnalyticsResponse:
     )
 
 
-def _holding_times(rows: list[ClientAnalytic] | Any) -> list[HoldingTimeEntry]:
+def _holding_times(rows: Sequence[ClientAnalytic]) -> list[HoldingTimeEntry]:
     """One entry per client; `avg_holding_days` is None when the client has no completed trades."""
     return [
         HoldingTimeEntry(client_id=row.client_id, avg_holding_days=row.avg_holding_days)
@@ -76,7 +77,7 @@ def _holding_times(rows: list[ClientAnalytic] | Any) -> list[HoldingTimeEntry]:
     ]
 
 
-def _most_volatile(rows: list[ClientAnalytic] | Any) -> MostVolatileClient | None:
+def _most_volatile(rows: Sequence[ClientAnalytic]) -> MostVolatileClient | None:
     """Client with the largest value_range, or None if there are no rows."""
     if not rows:
         return None
@@ -89,7 +90,7 @@ def _most_volatile(rows: list[ClientAnalytic] | Any) -> MostVolatileClient | Non
     )
 
 
-async def _build_bonus(session: Any, upload_id: int) -> BonusAnalytics | None:
+async def _build_bonus(session: AsyncSession, upload_id: int) -> BonusAnalytics | None:
     """
     Bonus section: top realized P&L client, win rates, most traded day.
     Returns None when none of the three have data — keeps the response
@@ -128,5 +129,16 @@ async def _build_bonus(session: Any, upload_id: int) -> BonusAnalytics | None:
 
 
 def _win_rate(winning: int, total: int) -> float:
-    """Derived value — not stored. total > 0 is guaranteed by the repo filter."""
+    """
+    Derived value — not stored.
+
+    Defensive: returns 0.0 when *total* is non-positive, even though the
+    repository filter (`get_win_rates` in `db.repositories.analytics`) is
+    documented to exclude `total_trades <= 0` rows. Trusting that contract
+    silently across module boundaries is a fragile pattern; an explicit
+    guard here costs one branch and removes a cross-file invariant the
+    next maintainer would have to discover.
+    """
+    if total <= 0:
+        return 0.0
     return float(Decimal(winning) / Decimal(total))

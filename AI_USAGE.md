@@ -319,6 +319,107 @@ The user explicitly asked for prominent placement of the deployment environment 
 
 The user-isolation layer we built in PR 2 (and the bugs the reviewer caught in it) wasn't wasted work. It demonstrated the layering discipline: we proved that the four downstream repositories (`transactions`, `positions`, `violations`, `client_analytics`, `analytics`) don't depend on the identity model. When we collapsed the identity model, they didn't move. That's exactly the property a well-layered system should have. The pivot was cheap *because* the layering was right.
 
+### PR 2 — Second Review Cycle (after raising the diff-char cap)
+
+The first PR 2 review ran against a truncated diff (the agent's `MAX_DIFF_CHARS = 80_000` cut off the second half of the PR). We bumped the cap to 500,000 and re-ran. A second batch of four points surfaced — three held up, one was a misread.
+
+**Accepted (3):**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `get_or_create_by_email`'s `SELECT … is None` fallback is safe under `READ COMMITTED` (the asyncpg default), but would silently break under `REPEATABLE READ` or `SERIALIZABLE` — the post-conflict SELECT could miss the row | Reviewer flagged the unstated isolation assumption | Added a paragraph to the docstring naming the isolation requirement and the symptom if it ever changes |
+| The `Position` model uses `default=Decimal(0)` (Python-side) but the migration uses `server_default=sa.text("0")` (DB-side) — undocumented dual-default pattern | Reviewer noted the asymmetry | Added a comment block on the Position model explaining the dual-default intent and that they must stay in sync |
+| `get_top_traded_isins` annotated as `Sequence[tuple[str, int]]` but actually returns `list` (from a comprehension); inconsistent with the other three list-building analytics functions in the same file | Reviewer flagged the imprecise annotation | Changed to `list[tuple[str, int]]`; dropped the now-unused `Sequence` import |
+
+**Rejected (1):** the reviewer claimed `get_client_summary` would miss clients that appear *only* in `violations` (not in `transactions` or `positions`). False — the helper `_ensure_client_row(cid)` is called inside the violations loop too, and `dict.setdefault` creates a row on first sight regardless of which query yielded the cid. The function name was literally renamed from `_bucket` to `_ensure_client_row` in the previous review cycle for exactly this clarity. Reviewer misread the code.
+
+---
+
+### PR 3 — Implementation (`feat/domain-and-ingestion`)
+
+Implementation went through three passes: initial code → user-driven readability refactor → AI reviewer cycle. The first pass produced working code; the second two cleaned it up.
+
+**Initial pass.** 7 new modules (domain/models, fifo, violations, analytics + ingestion/parser, validator) + 37 unit tests. Tests passed first try. One real infrastructure mistake surfaced immediately though:
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `pyproject.toml`'s `addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"` forced an 80% coverage gate on **every** pytest invocation — including `pytest tests/unit/`, which can't reach the DB layer because that's PR 5's territory. Unit-only runs would fail unavoidably | Tried to run the new unit tests and the pytest command exited non-zero with "Required test coverage of 80% not reached" | Moved `--cov-fail-under=80` from `addopts` to the `make test` target (full suite only). Unit-only and integration-only runs still produce a coverage report but don't enforce the gate. |
+
+### PR 3 — Readability Refactor (user-driven, two passes)
+
+After the implementation pass, the user looked at the code and said: "these functions are too long, refactor them." Two separate refactor rounds followed, with my honest evaluation between them.
+
+**Round 1 — long functions in `parser.py`, `fifo.py`, `analytics.py`.**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `parse_workbook` was ~55 lines doing six things (open workbook, validate header, build column-index map, iterate rows, skip blanks, build RawRows) in one function with nested try/finally | User read the file and asked "is this maintainable?" | Extracted `_open_workbook` (contextmanager), `_read_header_and_build_index`, `_parse_data_rows`, `_is_blank_row`, `_build_raw_row`. Main function now reads as a 10-line outline. |
+| `run_fifo` was ~95 lines with the per-(client, ISIN) FIFO algorithm inlined three nesting levels deep | Same conversation | Encapsulated the per-pair state and operations in a `_PairFIFO` dataclass (`apply(tx)` + `to_position(last_price)` methods + private `_apply_buy` / `_apply_sell` / `_consume_oldest_lot` / `_sell_before_buy`). `run_fifo` is now a 20-line orchestrator. |
+| `compute_client_analytics` was a single ~80-line function with triple-nested loops and inline aggregation | Same | Decomposed into `_simulate_portfolio_extremes`, `_apply_to_holdings`, `_portfolio_value`, `_group_trades_by_client`, `_compute_trade_stats`, `_build_client_analytics`. Two typed dataclasses (`_Extremes`, `_TradeStats`) surfaced to pass labelled bundles between helpers instead of unnamed tuples. |
+
+**Round 2 — boilerplate in `validator.py` and nesting in `violations.py`.**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `validate_rows` had 7 nearly-identical `if err is not None: row_errors.append(err)` blocks and 4 trailing `assert ... is not None` lines that existed purely to placate ty. The four-line `RowError(row_number=..., transaction_id=..., column=..., reason=...)` construction was copy-pasted ~10 times across the file | User asked "is this conventional? a lot of if statements" | Introduced `_err(raw, hint, column, reason)` helper (each error site collapses to one line), changed every `_validate_*` to return `RowError | T` (union) instead of `(RowError | None, T | None)` (tuple), added `_take(errors, result)` to route the union, extracted `_validate_one_row(raw) -> ValidatedRow | list[RowError]` so `validate_rows` becomes an 8-line loop. File shrank from 267 to 174 lines. |
+| `detect_day_trading` had three-deep nesting with the inner "find distinct sell-ISINs in 24h window" computation buried in the loop body, plus a dead `if flagged: continue` at the end that did nothing | User asked "are these long for a reason or just me?" | Extracted `_first_day_trading_breach` (returns `(anchor_ts, isins)` or None), `_sells_in_window`, `_day_trading_violation`. Removed the dead continue. |
+| `detect_risk_concentration` was inspected as part of the same review | Same conversation — I evaluated honestly and pushed back | Left unchanged: it was already at the right granularity (two levels of nesting, top-to-bottom reading, no subproblem hiding). Pushing back saved work without losing clarity. |
+
+A meta-note here: the user's "be honest about whether this needs work" framing surfaced things the AI reviewer hadn't even flagged. The reviewer focuses on correctness and obvious smells; the user's "is this readable?" question caught a different class of problem.
+
+### PR 3 — Review Cycle (`feat/domain-and-ingestion`)
+
+After the refactor passes, the CI Claude reviewer ran (this time against the full diff, with the 500k cap). 10 points raised; **9 held up**.
+
+**Accepted — real semantic / correctness fixes (2):**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `_sells_in_window` counted distinct sell-ISINs in the 24h window without requiring a matching Buy of the same ISIN. SPEC §5.3 was ambiguous ("pair") — under literal-pseudocode reading a Buy of A with sells of B/C/D/E (and no Buy of B/C/D/E in the window) would have flagged DAY_TRADING, which is industry-wrong (those sells are SELL_BEFORE_BUY, not day-trading) | Reviewer noted the loose interpretation and pointed at the industry definition of "pair" | Renamed to `_matched_pairs_in_window`; now returns `buys ∩ sells` (set intersection) for the window. SPEC §5.3 pseudocode clarified to use explicit set intersection. New test `test_day_trading_sells_without_matching_buy_do_not_count_as_pairs` proves the corrected behaviour. All five pre-existing day-trading tests still pass under the tighter rule. |
+| `_simulate_portfolio_extremes` initialised `min_value` and `max_value` to `Decimal(0)` for every client *before* any transaction. A buy-only client whose portfolio rose from 0 to $10K and held would (wrongly) get `min = 0, range = $10K` — but SPEC §5.5 says "simulate portfolio value *after every transaction*", not pre-trade. Range should be 0 for a buy-and-hold client (no volatility) | Reviewer cited the spec language and walked through the edge case | Removed the `dict.fromkeys(clients, ZERO)` seeding; min/max are now lazily initialised on each client's first post-transaction observation. New test `test_buy_only_client_has_zero_value_range` asserts the corrected behaviour. Docstring explains the spec-driven choice. |
+
+**Accepted — coverage gap (1, → 11 new tests):**
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `src/domain/analytics.py` had **zero unit tests** despite being arguably the most complex code in PR 3 (the cross-client market-propagation walk, the holding-time math, the win-rate counting). Reviewer flagged it explicitly: "this matters because the analytics functions are the most complex code in the PR" | Reviewer's coverage analysis | Added `tests/unit/test_analytics.py` with 11 tests covering: buy-only zero-range, buy-then-sell back to zero, cross-client market propagation, multi-ISIN holdings sum, oversell-cannot-short, None-stats for clients without completed trades, winning vs losing trade counting, average holding days, per-client trade grouping, empty-transactions edge case, deterministic ordering. Test count: 37 → 49. |
+
+**Accepted — hygiene + documentation (6):**
+
+| Suggestion | Fix |
+|---|---|
+| `HeaderValidationError` interpolated the raw openpyxl exception text into the user-facing message — could leak file-system paths or internal details in a future openpyxl version | Generic message ("Could not read workbook — the file may be corrupt or not a valid .xlsx") with the original exception preserved as `__cause__` via `raise … from exc` |
+| `_read_header_and_build_index` used `list.index()` which silently returns the first occurrence on duplicate column headers | Replaced with an explicit single-pass loop that raises `HeaderValidationError("Duplicate column headers: …")` on any duplicate |
+| `FIFOResult` docstring said "immutable" but list-typed fields on a `frozen=True` dataclass are still mutable in their contents | Changed wording to "frozen" with an explicit paragraph noting that callers must not mutate the lists post-construction |
+| `_group_and_sort` docstring didn't distinguish the correctness sort (per-group, by timestamp — FIFO needs it) from the determinism sort (across groups in `run_fifo`, just for stable test output) | Added a paragraph naming the two and which is which |
+| `.idea/dataSources.xml` was tracked in git — IDE-specific user-local state that should never be committed (the file registered the local `.coverage` SQLite as a data source) | `git rm --cached`d the file; added `.idea/dataSources*`, `.idea/sqlDataSources.xml`, `.idea/workspace.xml`, `.idea/shelf/` to `.gitignore` (kept the project-shared files like `.iml`, `misc.xml`, `vcs.xml` tracked) |
+| The O(n × c) cost of `_simulate_portfolio_extremes` (every transaction triggers a full pass over every client) was undocumented — acceptable at assignment scale but should be flagged | Added §4a to `docs/PRODUCTION_ROADMAP.md` describing the inverted-index optimisation (`isin → set[holders]`) that would collapse the inner loop to O(holders-per-ISIN) |
+
+**Rejected (1):** reviewer claimed the `src/domain/models.py` comment "Duplicated from `src.db.models`" for the action constants was forward-looking and misleading. Verified by grepping: `ACTION_BUY = "Buy"` and `ACTION_SELL = "Sell"` actually do exist in `src/db/models.py:33-34`. The comment is accurate.
+
+---
+
+### PR 4 — Implementation (`feat/api-layer`)
+
+Most uneventful PR so far — the routes are thin orchestration over already-tested layers (validator + FIFO + detectors + analytics from PR 3; repositories from PR 2). Two real mistakes surfaced during verification, both caught by running the actual checks rather than by review:
+
+| Mistake I made | How it was discovered | Fix applied |
+|---|---|---|
+| `src/api/deps.py` validates the `X-Session-Token` value as `pydantic.EmailStr`, but I didn't add the runtime dependency — pydantic's `EmailStr` requires `email-validator` (not bundled with pydantic itself) | Tried to import the app: `ImportError: email-validator is not installed, run \`pip install 'pydantic[email]'\`` | Changed the dependency from `"pydantic-settings>=2.6"` alone to `"pydantic[email]>=2.6"` + `"pydantic-settings>=2.6"` in both `pyproject.toml` and `requirements.txt` |
+| `upload.py` had a `_ = FIFOResult, Decimal` line at the bottom — a leftover from an earlier draft where I imported them speculatively and then tried to suppress the unused-import warning with a discard | Ruff flagged it, plus the imports were genuinely unused | Removed both the speculative imports and the `_ = ...` placeholder |
+
+### Cross-cutting — pre-existing CI build-backend typo
+
+After PR 4 was ready to push, the user pointed out that CI's `lint` and `test` jobs had been failing the whole time — the only reason previous PRs merged at all was because the `needs:` gate on the Claude PR review job was commented out. I had been writing `[skip ci]` commit messages without ever realising CI was *unconditionally* failing for an unrelated reason:
+
+| Mistake (pre-existing, but I should have noticed) | How it was discovered | Fix applied |
+|---|---|---|
+| `pyproject.toml`'s `[build-system]` block had `build-backend = "setuptools.backends.legacy:build"` — this is not a real Python module. `pip install -e ".[dev]"` crashes immediately with `BackendUnavailable: Cannot import 'setuptools.backends.legacy'`. CI runs that exact pip command as the first step of both jobs, so neither job ever reached its actual checks | User asked "why is CI always failing? I had to comment the `needs:` gate" | Changed to `setuptools.build_meta` (the canonical setuptools backend) — one-line fix. Verified locally: `pip install -e ".[dev]"` exits 0; `ruff check .`, `ruff format --check .`, `ty check src/`, and `pytest tests/unit/` all pass on a fresh install. Re-enabled `needs: [lint, test]` on the review job so the Anthropic API call only fires after the gate passes. |
+
+A lesson worth recording: when the test environment already has the package installed in dev mode, a broken `build-backend` is invisible — the existing install just works. CI starts from scratch every time and is where the breakage surfaces. The "works on my machine" failure mode is exactly this. Next time, the verification step for any PR touching `pyproject.toml` should include `pip install -e ".[dev]"` from a clean venv, not just import-checks against the existing one.
+
+---
+
 ### Backend
 
 | Component | What Claude generated | What we modified |

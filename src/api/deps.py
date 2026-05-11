@@ -10,25 +10,22 @@ described in ADR 016 a one-function change.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database import get_session as _core_get_session
+from src.core.database import get_session
 from src.db.models import User
 from src.db.repositories import users as users_repo
 
+# `get_session` is re-exported from `src.core.database` directly (no api-layer
+# wrapper) — the wrapper would be pure indirection. Tests that need a custom
+# session factory override `src.core.database.get_session` via
+# `app.dependency_overrides`.
+
 _EMAIL_VALIDATOR: TypeAdapter[EmailStr] = TypeAdapter(EmailStr)
-
-
-async def get_session() -> AsyncIterator[AsyncSession]:
-    """Yield an `AsyncSession` for one request. Wraps the core engine factory."""
-    async for session in _core_get_session():
-        yield session
-
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 

@@ -21,7 +21,6 @@ from src.api.schemas import (
 from src.db.repositories import positions as positions_repo
 from src.db.repositories import uploads as uploads_repo
 from src.db.repositories import users as users_repo
-from src.db.repositories import violations as violations_repo
 
 router = APIRouter()
 
@@ -68,18 +67,18 @@ async def set_last_viewed(
     await users_repo.update_last_viewed(session, user_id=user.id, upload_id=body.upload_id)
     await session.commit()
 
-    # Re-derive the summary numbers from existing rows so callers see the
-    # same response shape as the original upload. `transactions_loaded` is
-    # denormalised on the upload row at insert time, so we don't need to
-    # re-count from the transactions table.
-    positions = await positions_repo.get_all_by_upload(session, body.upload_id)
-    violations = await violations_repo.get_by_upload(session, upload_id=body.upload_id)
+    # `transactions_loaded` and `violations_detected` are already denormalised
+    # on the upload row at insert time — no need to re-count from the
+    # transactions or violations tables. Position count is the only number we
+    # actually have to query, and we use COUNT(*) instead of fetching every
+    # row.
+    positions_computed = await positions_repo.count_by_upload(session, body.upload_id)
 
     return UploadResponse(
         upload_id=upload.id,
         summary=UploadSummary(
             transactions_loaded=upload.row_count,
-            positions_computed=len(positions),
-            violations_detected=len(violations),
+            positions_computed=positions_computed,
+            violations_detected=upload.violation_count,
         ),
     )

@@ -56,13 +56,6 @@ from src.ingestion.validator import validate_rows
 router = APIRouter()
 
 MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB — SPEC §0 / §4
-_XLSX_CONTENT_TYPES: frozenset[str] = frozenset(
-    {
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-        "application/octet-stream",  # some browsers send this; trust the extension instead
-    }
-)
 
 
 @router.post(
@@ -163,27 +156,32 @@ async def upload_transactions(
 
 
 async def _read_and_guard_file(file: UploadFile) -> bytes:
-    """Validate filename + content-type, read the body, enforce the size cap."""
+    """
+    Validate the filename, read the body, and enforce empty/size guards.
+
+    No MIME-type check: browsers and curl alike send `application/octet-stream`
+    for files of unknown type, so a strict allow-list would lock out legitimate
+    uploads, and a permissive allow-list (the previous approach) accepted
+    almost anything — strictly worse than no check, because it *looks* like a
+    security gate. The `.xlsx` filename check is a cheap smoke filter;
+    openpyxl is the real validator (it raises `HeaderValidationError` if the
+    bytes aren't a readable workbook).
+    """
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Expected an .xlsx file",
         )
-    if file.content_type and file.content_type not in _XLSX_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unexpected content type: {file.content_type}",
-        )
     content = await file.read()
-    if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"File exceeds the {MAX_FILE_BYTES // (1024 * 1024)}MB limit",
-        )
     if not content:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Uploaded file is empty",
+        )
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"File exceeds the {MAX_FILE_BYTES // (1024 * 1024)}MB limit",
         )
     return content
 

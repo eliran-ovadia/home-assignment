@@ -83,6 +83,30 @@ Key changes required:
 
 ---
 
+## 5a. Streaming File Upload + Decompression Guards
+
+**Current:** `src/api/routes/upload.py` reads the entire request body into memory with `await file.read()`, then checks the 10 MB cap. The parser runs openpyxl in `read_only=True` mode (streaming inside the workbook) on the buffered bytes. Acceptable at the corporate-intranet scale and the 10 MB ceiling, but two production-shaped concerns remain:
+
+1. **Whole-file buffering before the size check.** A client can transmit up to 10 MB into the server's RAM before we know it's too big (more, briefly, with backpressure). Under concurrent load the per-request memory cost is bounded but not minimal. A streaming read that increments a counter chunk-by-chunk and aborts the request at the first byte past the cap would be more robust:
+
+   ```python
+   chunks, total = [], 0
+   async for chunk in file.stream():
+       total += len(chunk)
+       if total > MAX_FILE_BYTES:
+           raise HTTPException(413, "File exceeds the 10MB limit")
+       chunks.append(chunk)
+   content = b"".join(chunks)
+   ```
+
+2. **Zip-bomb risk.** `.xlsx` is a zip archive. A maliciously compressed 10 MB file can expand to hundreds of MB. `read_only=True` mitigates by streaming inside the workbook, but openpyxl still incrementally decompresses the underlying zip. Hard caps available on the production path:
+   - `zipfile.ZipFile` introspection before handing the bytes to openpyxl: sum of `ZipInfo.file_size` (uncompressed) must be under a ceiling (e.g. 200 MB).
+   - Wall-clock budget on the parse via a worker process (not `asyncio.wait_for` on a thread — that cancels the *wait*, not the running thread; CPython has no portable way to kill a thread mid-call).
+
+**Why deferred:** the 10 MB cap is the primary defense and is sufficient at the assignment scale and target deployment context (authenticated corporate users on managed devices, not the public internet). Both upgrades — streaming read and zip-introspection — are mechanical changes that don't affect the route's contract.
+
+---
+
 ## 6. Authentication & Authorisation
 
 **Current:** No authentication. The API is open — anyone with network access can upload files and read all client data.
