@@ -29,4 +29,4 @@ Use the synchronous model. The client waits for the full result in a single HTTP
 
 ## Production Path
 
-Documented in `docs/PRODUCTION_ROADMAP.md` item 1: Celery + Redis task queue. The upload route changes to `POST → 202 + job_id`. The frontend polls `GET /api/v1/jobs/{id}` for status. Users never receive a 409 under concurrent load.
+Documented in `docs/PRODUCTION_ROADMAP.md` §2: Celery + Redis task queue. The upload route changes to `POST → 202 + job_id`. The frontend polls `GET /api/v1/jobs/{id}` for status. Users never receive a 409 under concurrent load.

@@ -17,7 +17,7 @@ The trust model has four pillars:
 1. **Network perimeter.** Only authenticated corporate users reach the application. The corporate VPN, firewall, or Zero-Trust gateway enforces this boundary; the application does not re-authenticate at the network layer.
 2. **Verified corporate emails.** Every user has a verified corporate email address provisioned by the organization's identity provider (e.g. Microsoft Entra ID / Azure AD, Okta, Google Workspace). The frontend captures this email once per device and submits it on every request via the `X-Session-Token` header. See ADR 016.
 3. **Shared trading-desk data.** All uploads are visible to every user in the organization — this is intentional. Users come to the platform to share trading-desk data with each other, not to keep it private. Per-user state is limited to a single `last_viewed_upload_id` UI preference. See ADR 016.
-4. **Production migration path.** A production rollout replaces the user-typed email with an IdP-injected claim (OIDC / SAML SSO via reverse-proxy SSO header or library middleware). The application code does not change — only `get_current_user` swaps its source from "header value" to "IdP-injected claim". Migration is documented in `docs/PRODUCTION_ROADMAP.md` §6.
+4. **Production migration path.** A production rollout replaces the user-typed email with an IdP-injected claim (OIDC / SAML SSO via reverse-proxy SSO header or library middleware). The application code does not change — only `get_current_user` swaps its source from "header value" to "IdP-injected claim". Migration is documented in `docs/PRODUCTION_ROADMAP.md` §1.
 
 **Implications for security review.** The application accepts a corporate email in an HTTP header without per-request cryptographic verification. Outside the contexts described above this is incomplete — anyone could impersonate anyone. Inside the context the trust boundary has already been enforced upstream by the corporate network and IdP. **Treat the email-in-header pattern as `Remote-User`-style SSO header forwarding, not as primary authentication.**
 
@@ -776,9 +776,9 @@ These are documented for interview discussion — not implemented in the assignm
 
 | Concern | Assignment approach | Production path |
 |---------|--------------------|----|
-| Concurrent uploads | Independent transactions per upload, no lock | Celery + Redis queue: return job ID immediately, client polls |
+| Concurrent uploads | Independent transactions per upload, no lock | Celery + Redis queue: return job ID immediately, client polls (see `PRODUCTION_ROADMAP.md` §2) |
 | Large file parsing | openpyxl read_only streaming, 10MB limit | `python-calamine` (Rust-based, 10–100× faster) + 100MB limit |
-| CPU-bound FIFO | Single-threaded via `asyncio.to_thread()` | `ProcessPoolExecutor` across (client, ISIN) pairs — see `PRODUCTION_ROADMAP.md` |
+| CPU-bound FIFO | Single-threaded via `asyncio.to_thread()` | `ProcessPoolExecutor` across (client, ISIN) pairs — pairs are independent so embarrassingly parallel |
 | DB growth | Rows accumulate per upload indefinitely | Retention policy: archive or delete uploads older than N days |
 | Analytics latency | Precomputed on upload | Redis cache keyed by `upload_id`; invalidate on new upload |
 | Identity | Corporate email in `X-Session-Token` (ADR 016) | OIDC/SAML SSO with IdP-injected claim. `get_current_user()` is the only code that changes. |

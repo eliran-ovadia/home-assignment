@@ -275,8 +275,9 @@ Documented production gaps — known, defensible, listed in
 - **Replace-on-upload, not incremental ledger.** ADR 009 — explicit
   scope decision documented in conversation.
 - **Single-threaded FIFO.** Per-(client, ISIN) groups are independent
-  and trivially parallelisable; a `ProcessPoolExecutor` variant is
-  documented in `PRODUCTION_ROADMAP.md` only.
+  and trivially parallelisable with a `ProcessPoolExecutor`; deferred
+  because spawn overhead exceeds compute time at assignment scale
+  (hundreds of pairs).
 - **Synchronous upload.** Celery + Redis queue is the production path;
   out of scope for this submission.
 

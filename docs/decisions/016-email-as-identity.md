@@ -13,7 +13,7 @@ ADR 014 introduced per-upload result storage. ADR 015 layered UUID-in-`localStor
 
 Removing the isolation simplifies several layers (no `user_id` FK chain, no `is_active` flag, no per-user advisory lock, no ownership checks on `set_active`). But we still need a way to remember each user's last-viewed upload across devices. That requires identity.
 
-Full authentication (passwords, JWT, login page) remains out of scope for this assignment and is documented as a production gap in `docs/PRODUCTION_ROADMAP.md` §6.
+Full authentication (passwords, JWT, login page) remains out of scope for this assignment and is documented as a production gap in `docs/PRODUCTION_ROADMAP.md` §1.
 
 ## Decision
 
@@ -55,5 +55,5 @@ Replace `get_current_user()` with an OIDC / SAML middleware that injects an IdP-
 - Net: roughly 50 fewer lines of repository code, simpler API contract.
 
 **Known gaps explicitly accepted under the deployment-context assumption**
-- Anyone who knows another user's corporate email can pose as them via the `X-Session-Token` header. Within an intranet protected by VPN + IdP this is acceptable; on the public internet it is not. The corporate network perimeter is the gating boundary. See `docs/SPEC.md` §0 and `docs/PRODUCTION_ROADMAP.md` §6 for the production swap-in.
+- Anyone who knows another user's corporate email can pose as them via the `X-Session-Token` header. Within an intranet protected by VPN + IdP this is acceptable; on the public internet it is not. The corporate network perimeter is the gating boundary. See `docs/SPEC.md` §0 and `docs/PRODUCTION_ROADMAP.md` §1 for the production swap-in.
 - Email format is checked by `pydantic.EmailStr`; no MX/domain verification (handled by the corporate provisioning chain in production).
