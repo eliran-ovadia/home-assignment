@@ -81,13 +81,13 @@ async def upload_transactions(
         raw_rows = await asyncio.to_thread(parse_workbook, content)
     except HeaderValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
     valid_rows, row_errors = await asyncio.to_thread(validate_rows, raw_rows)
     if row_errors:
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=RejectedRowsResponse(
                 rejected_rows=[
                     RejectedRow(
@@ -103,7 +103,7 @@ async def upload_transactions(
 
     if not valid_rows:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Workbook contains a header row but no data rows",
         )
 
@@ -169,18 +169,18 @@ async def _read_and_guard_file(file: UploadFile) -> bytes:
     """
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Expected an .xlsx file",
         )
     content = await file.read()
     if not content:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Uploaded file is empty",
         )
     if len(content) > MAX_FILE_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"File exceeds the {MAX_FILE_BYTES // (1024 * 1024)}MB limit",
         )
     return content

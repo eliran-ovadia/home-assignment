@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-# Database service is intentionally omitted here.
-# Once the assignment defines the DB engine, add a service block and
-# uncomment the integration-test step. See docs/decisions/004.
-
 jobs:
   lint:
     name: Lint & type-check
@@ -33,12 +29,49 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest tests/unit/
+      - run: pytest tests/unit/ --no-cov
+
+  integration:
+    name: Test (integration + coverage gate)
+    runs-on: ubuntu-latest
+    # Service container — `services:` maps onto Docker images that GitHub
+    # Actions runs in the background. We point Postgres at the same DB
+    # name / user / password the app uses, so `Settings` doesn't need a
+    # test-specific code path.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: assignment
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        # Wait until Postgres accepts connections before steps run.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: assignment
+      DB_USER: postgres
+      DB_PASSWORD: ci_test_password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # Full suite — both unit and integration — with the 80% coverage gate.
+      - run: make test
 
   review:
     name: Claude PR Review
     # Only runs on pull requests, and only after lint + tests pass
-    needs: [lint, test]
+    needs: [lint, test, integration]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
