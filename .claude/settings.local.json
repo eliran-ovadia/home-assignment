@@ -47,7 +47,8 @@
       "Bash(pip uninstall *)",
       "Bash(DB_PASSWORD=lumina_dev_2026 docker compose up -d --build)",
       "Bash(curl -s -o /dev/null -w \"GET /          : HTTP %{http_code}\\\\n\" http://localhost:8000/)",
-      "Bash(curl -s -o /dev/null -w \"GET /api/docs  : HTTP %{http_code}\\\\n\" http://localhost:8000/api/docs)"
+      "Bash(curl -s -o /dev/null -w \"GET /api/docs  : HTTP %{http_code}\\\\n\" http://localhost:8000/api/docs)",
+      "Bash(awk '{print $9, \"\\(\" $5 \"B\\)\"}')"
     ]
   }
 }
