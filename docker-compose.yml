@@ -5,8 +5,6 @@ services:
       - "8000:8000"
     environment:
       # Non-sensitive config passed directly.
-      # Secrets (DB password, API keys) must come from the host environment —
-      # never hardcoded here. See docs/decisions/005-secret-manager-over-dotenv.md
       APP_ENV: development
       DB_HOST: db
       DB_PORT: "5432"
@@ -17,8 +15,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./src:/app/src  # live-reload in development
+    # No `volumes: - ./src:/app/src` here — that bind mount was for an
+    # earlier "live-reload in dev" pattern; with the React bundle and
+    # migrations baked into the image, mounting over /app/src would mask
+    # the production layout. Run `make dev` for live-reload via uvicorn,
+    # not `docker compose up`.
 
   db:
     image: postgres:16-alpine

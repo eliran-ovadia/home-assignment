@@ -8,19 +8,32 @@ under the canonical name `app`, which `uvicorn src.api.app:app` boots.
 
 Lifespan: `init_db()` at startup, `close_db()` at shutdown. Both are
 idempotent so test fixtures can call them too.
+
+In production (Docker), the built React bundle is mounted at `/` so the
+same port serves both the UI and the API. In dev (Vite on :5173), the
+mount is skipped because `frontend/dist/` doesn't exist — Vite proxies
+`/api` to this server instead. ADR 008.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import analytics, clients, upload, uploads, violations
 from src.core.database import close_db, init_db
 
 API_V1_PREFIX = "/api/v1"
+
+# Repo-relative path to the production frontend bundle. In a Docker build the
+# files end up at `/app/frontend/dist`; locally they end up at
+# `<repo>/frontend/dist`. The `parent.parent.parent` resolves to the repo
+# root both ways.
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -47,6 +60,16 @@ def create_app() -> FastAPI:
     app.include_router(violations.router, prefix=API_V1_PREFIX, tags=["violations"])
     app.include_router(analytics.router, prefix=API_V1_PREFIX, tags=["analytics"])
     app.include_router(uploads.router, prefix=API_V1_PREFIX, tags=["uploads"])
+
+    # Static-file mount at "/" comes *after* the API routers so it doesn't
+    # shadow them. `html=True` serves `index.html` on the bare root path.
+    # Conditional so dev mode (no built bundle on disk) doesn't error.
+    if FRONTEND_DIST.is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=str(FRONTEND_DIST), html=True),
+            name="frontend",
+        )
     return app
 
 

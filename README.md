@@ -56,21 +56,24 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full technical specification: databas
 ## Setup
 
 ```bash
-# 1. Install Python dependencies and wire up pre-commit hooks
+# 1. Install both backend and frontend dependencies + pre-commit hooks
 make install
 
-# 2. Install frontend dependencies
-cd frontend && npm install && cd ..
-
-# 3. Configure environment
+# 2. Configure environment
 cp .env.example .env
-# Edit .env and set DB_PASSWORD (and any other required values)
+# Edit .env and set DB_PASSWORD (Docker Compose reads .env automatically)
 
-# 4. Start the full environment (app + database)
+# 3. Start the full environment (app + database, three-stage Docker build)
 make dev
-# → App available at http://localhost:8000
-# → API docs at http://localhost:8000/api/docs
+# → App + UI at http://localhost:8000/
+# → Swagger at  http://localhost:8000/api/docs
 ```
+
+First boot pulls the `node:20-alpine` + `python:3.12-slim` + `postgres:16-alpine`
+base images and runs `npm install` + `npm run build` + `pip install` once;
+subsequent boots reuse the cached image layers. The `app` service won't
+start until Postgres reports healthy, and its entrypoint runs
+`alembic upgrade head` before launching uvicorn — no manual migration step.
 
 ---
 
