@@ -93,7 +93,7 @@ flowchart TB
 
     Migrations[migrations/versions/<br/>0001_initial_schema.py<br/>Alembic offline-capable]:::core
 
-    Browser -.HTTPS.-> Main
+    Browser -. HTTPS .-> Main
     Main --> App
     App --> EmailGate
     App --> UploadSection
@@ -109,11 +109,11 @@ flowchart TB
     ViolationsTable --> APIClient
     AnalyticsPanel --> APIClient
     App --> APIClient
-    ClientSelector -.props only.-> Types
+    ClientSelector -. props only .-> Types
     ViolationsTable --> Types
     APIClient --> Types
 
-    APIClient -.X-Session-Token: email.-> AppPy
+    APIClient -. X-Session-Token header .-> AppPy
 
     AppPy --> UploadRoute
     AppPy --> UploadsRoute
@@ -178,9 +178,9 @@ flowchart TB
     RepAnalytics --> Database
 
     Database --> Config
-    Database -.SQLAlchemy 2.0 + asyncpg.-> PG
-    ORM -.declarative mapping.-> PG
-    Migrations -.alembic upgrade head.-> PG
+    Database -. asyncpg driver .-> PG
+    ORM -. declarative mapping .-> PG
+    Migrations -. alembic upgrade head .-> PG
 ```
 
 ### Reading the graph
@@ -435,17 +435,17 @@ flowchart LR
         APP[app service<br/>uvicorn :8000<br/>FastAPI + React static]:::svc
     end
 
-    Dev -.docker compose up --build.-> compose
-    Dev -.HTTP :8000.-> APP
+    Dev -. docker compose up .-> compose
+    Dev -. HTTP port 8000 .-> APP
 
-    DB -.healthcheck passes.-> MIG
-    MIG -.service_completed_successfully.-> APP
+    DB -. healthcheck passes .-> MIG
+    MIG -. completed successfully .-> APP
 
-    APP -.asyncpg :5432.-> DB
-    MIG -.alembic :5432.-> DB
+    APP -. asyncpg port 5432 .-> DB
+    MIG -. alembic port 5432 .-> DB
 
-    S3 -.image used by.-> APP
-    S3 -.image used by.-> MIG
+    S3 -. image used by .-> APP
+    S3 -. image used by .-> MIG
 ```
 
 ### Startup gate
