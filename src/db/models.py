@@ -9,11 +9,9 @@ the migration file and any runtime code reference the same source of truth.
 from __future__ import annotations
 
 import datetime
-import uuid
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -25,7 +23,6 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # All money/quantity columns share this precision. NUMERIC(18,6) covers the
@@ -41,37 +38,15 @@ class Base(DeclarativeBase):
     """Shared declarative base. `Base.metadata` is what Alembic targets."""
 
 
-class User(Base):
-    """One row per anonymous browser session (ADR 015)."""
-
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_token: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, unique=True
-    )
-    created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=False),
-        nullable=False,
-        server_default=func.now(),
-    )
-
-    uploads: Mapped[list[Upload]] = relationship(
-        back_populates="user",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-
 class Upload(Base):
-    """File history. One row per uploaded file, per user. Never deleted."""
+    """
+    File history. One row per uploaded file. Visible to every user in the
+    organization — uploads are a shared pool (ADR 016).
+    """
 
     __tablename__ = "uploads"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     file_content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -81,12 +56,7 @@ class Upload(Base):
         nullable=False,
         server_default=func.now(),
     )
-    # At most one active upload per user — enforced in application logic
-    # (uploads repository.set_active) rather than as a partial unique index,
-    # which keeps the schema portable and avoids deadlocks under load.
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    user: Mapped[User] = relationship(back_populates="uploads")
     transactions: Mapped[list[Transaction]] = relationship(
         back_populates="upload",
         cascade="all, delete-orphan",
@@ -108,7 +78,31 @@ class Upload(Base):
         passive_deletes=True,
     )
 
-    __table_args__ = (Index("ix_uploads_user_id", "user_id"),)
+
+class User(Base):
+    """
+    One row per known corporate email (ADR 016).
+
+    `email` is the identity. `last_viewed_upload_id` is a per-user UI preference
+    that lets a returning user (possibly on a new device) auto-load the upload
+    they last selected. `ON DELETE SET NULL` keeps this safe when an upload row
+    is removed — the user just sees the upload list again on next visit.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    last_viewed_upload_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("uploads.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=func.now(),
+    )
 
 
 class Transaction(Base):
@@ -136,8 +130,11 @@ class Transaction(Base):
     upload: Mapped[Upload] = relationship(back_populates="transactions")
 
     __table_args__ = (
+        # Literal value list, not an f-string — keeps the constraint SQL
+        # immune to any future change in the Python-side constants. The
+        # constants below remain the single source of truth for domain code.
         CheckConstraint(
-            f"action IN ('{ACTION_BUY}', '{ACTION_SELL}')",
+            "action IN ('Buy', 'Sell')",
             name="ck_transactions_action",
         ),
         Index("ix_transactions_upload_id", "upload_id"),

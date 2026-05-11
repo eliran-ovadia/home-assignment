@@ -21,7 +21,7 @@ async def bulk_insert(session: AsyncSession, rows: Sequence[dict[str, Any]]) -> 
     """
     if not rows:
         return
-    await session.execute(sa_insert(Transaction), list(rows))
+    await session.execute(sa_insert(Transaction), rows)
 
 
 async def get_by_upload(session: AsyncSession, upload_id: int) -> Sequence[Transaction]:

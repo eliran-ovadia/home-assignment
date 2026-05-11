@@ -16,7 +16,7 @@ async def bulk_insert(session: AsyncSession, rows: Sequence[dict[str, Any]]) -> 
     """Insert many violation rows in one executemany."""
     if not rows:
         return
-    await session.execute(sa_insert(Violation), list(rows))
+    await session.execute(sa_insert(Violation), rows)
 
 
 async def get_by_upload(

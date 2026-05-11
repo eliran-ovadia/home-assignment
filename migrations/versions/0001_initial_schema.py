@@ -2,7 +2,7 @@
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-05-10
+Create Date: 2026-05-11
 """
 
 from __future__ import annotations
@@ -11,40 +11,26 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import UUID
 
 revision: str = "0001"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Shared money/quantity precision. Matches `_MONEY` in src/db/models.py.
+# Shared money/quantity precision. Intentionally duplicated from
+# src/db/models.py rather than imported — migrations are immutable snapshots
+# of schema-at-a-point-in-time; importing live model code would silently
+# change the behaviour of an already-applied migration if the model later
+# evolves. If you change one of these values, change the other too.
 _MONEY = sa.Numeric(18, 6)
 _RATIO = sa.Numeric(10, 4)
 
 
 def upgrade() -> None:
-    op.create_table(
-        "users",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("session_token", UUID(as_uuid=True), nullable=False, unique=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=False),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-    )
-
+    # uploads has no outgoing FKs — create first so other tables can reference it.
     op.create_table(
         "uploads",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.Integer(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
         sa.Column("filename", sa.Text(), nullable=False),
         sa.Column("file_content", sa.LargeBinary(), nullable=False),
         sa.Column("row_count", sa.Integer(), nullable=False),
@@ -55,9 +41,26 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.now(),
         ),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
-    op.create_index("ix_uploads_user_id", "uploads", ["user_id"])
+
+    # users references uploads via the per-user last_viewed preference (ADR 016).
+    op.create_table(
+        "users",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("email", sa.Text(), nullable=False, unique=True),
+        sa.Column(
+            "last_viewed_upload_id",
+            sa.Integer(),
+            sa.ForeignKey("uploads.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=False),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+    )
 
     op.create_table(
         "transactions",
@@ -162,10 +165,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Reverse dependency order: drop children before parents.
+    # Reverse dependency order: drop tables that reference uploads before
+    # uploads itself. `users.last_viewed_upload_id` is the only outbound FK
+    # on users, so users must be dropped before uploads as well.
     op.drop_table("client_analytics")
     op.drop_table("violations")
     op.drop_table("positions")
     op.drop_table("transactions")
-    op.drop_table("uploads")
     op.drop_table("users")
+    op.drop_table("uploads")

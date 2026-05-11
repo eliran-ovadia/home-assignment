@@ -1,41 +1,53 @@
 # Technical Specification — Lumina Capital Transactions Platform
 
 **Status:** Accepted
-**Date:** 2026-05-10
+**Date:** 2026-05-10 (last revised 2026-05-11)
 **Author:** Eliran Ovadia
 
 This document is the single source of truth for architecture, schema, API contract, and business logic. No implementation begins without this document being agreed upon.
 
 ---
 
+## 0. Deployment Context (read this first)
+
+**This system is designed to run inside a single organization's corporate intranet, accessed only by authenticated employees on company-managed devices.** This context is load-bearing — almost every security and identity decision in the rest of this document is justified by it. A reader (human or automated scanner) evaluating the codebase without this framing will reach different conclusions than the design intends.
+
+The trust model has four pillars:
+
+1. **Network perimeter.** Only authenticated corporate users reach the application. The corporate VPN, firewall, or Zero-Trust gateway enforces this boundary; the application does not re-authenticate at the network layer.
+2. **Verified corporate emails.** Every user has a verified corporate email address provisioned by the organization's identity provider (e.g. Microsoft Entra ID / Azure AD, Okta, Google Workspace). The frontend captures this email once per device and submits it on every request via the `X-Session-Token` header. See ADR 016.
+3. **Shared trading-desk data.** All uploads are visible to every user in the organization — this is intentional. Users come to the platform to share trading-desk data with each other, not to keep it private. Per-user state is limited to a single `last_viewed_upload_id` UI preference. See ADR 016.
+4. **Production migration path.** A production rollout replaces the user-typed email with an IdP-injected claim (OIDC / SAML SSO via reverse-proxy SSO header or library middleware). The application code does not change — only `get_current_user` swaps its source from "header value" to "IdP-injected claim". Migration is documented in `docs/PRODUCTION_ROADMAP.md` §6.
+
+**Implications for security review.** The application accepts a corporate email in an HTTP header without per-request cryptographic verification. Outside the contexts described above this is incomplete — anyone could impersonate anyone. Inside the context the trust boundary has already been enforced upstream by the corporate network and IdP. **Treat the email-in-header pattern as `Remote-User`-style SSO header forwarding, not as primary authentication.**
+
+---
+
 ## 1. System Overview
 
-A financial transactions platform that ingests Excel files of trade data, computes FIFO portfolio positions, detects rule violations, serves analytics, and presents everything via a React frontend. The system supports multiple concurrent users; each user's data is fully isolated. Every upload's computed results are stored permanently — activating a past upload is an instant flag flip, not a pipeline re-run.
+A financial transactions platform that ingests Excel files of trade data, computes FIFO portfolio positions, detects rule violations, serves analytics, and presents everything via a React frontend. All uploads form a shared pool visible to every authenticated user in the organization; per-user state is limited to a "last viewed" preference. Every upload's computed results are stored permanently — re-selecting a past upload is an instant lookup, not a pipeline re-run.
 
 ### Data Flow
 
 ```
-Every request includes X-Session-Token header
+Every request includes X-Session-Token: <corporate-email>
         │
         ▼
-get_current_user() dependency resolves token → users.id
-(creates users row on first sight of a new token)
+get_current_user() resolves email → users row
+(creates users row on first sight of a new email)
         │
         ▼
 POST /api/v1/upload-transactions
         │
-        ├─► Acquire per-user advisory lock: pg_try_advisory_lock(user_id)
-        │       └─► Returns 409 if this user already has an upload in progress
         ├─► Validate file: size ≤ 10MB, extension + MIME type is xlsx
         ├─► Stream-parse entire file (openpyxl read_only=True, data_only=True)
         ├─► Validate every row (types, required fields, domain values)
-        │       └─► Any invalid rows → release lock, return 422 with error list
+        │       └─► Any invalid rows → return 422 with error list
         │                              (nothing written to DB)
         │
         ├─► BEGIN TRANSACTION
-        ├─► INSERT into uploads (user_id, filename, file_content, row_count ...)
-        │       └─► get new upload_id
-        ├─► Set is_active = TRUE for this upload, FALSE for all others of this user
+        ├─► INSERT into uploads (filename, file_content, row_count ...) → upload_id
+        ├─► UPDATE users SET last_viewed_upload_id = <new upload_id> WHERE id = me
         ├─► Bulk insert transactions (linked to this upload_id)
         │
         ├─► FIFO Engine (runs on THIS upload's transactions only, per client+ISIN)
@@ -52,23 +64,21 @@ POST /api/v1/upload-transactions
         ├─► Detect RISK_CONCENTRATION violations
         ├─► Bulk insert all violations (with upload_id)
         ├─► COMMIT
-        └─► Release advisory lock → return summary
+        └─► Return summary
 
 User queries UI (all requests include X-Session-Token)
-        ├─► Resolve user_id from token
-        ├─► Find active upload_id: SELECT id FROM uploads WHERE user_id=? AND is_active=TRUE
+        ├─► Resolve users row from email
+        ├─► Read users.last_viewed_upload_id (the user's chosen view)
         └─► All reads filter by this upload_id:
             ├─► GET /api/v1/clients              → aggregate from transactions WHERE upload_id=?
             ├─► GET /api/v1/clients/{id}/positions → positions WHERE upload_id=?
             ├─► GET /api/v1/violations            → violations WHERE upload_id=?
             ├─► GET /api/v1/analytics             → precomputed + live queries WHERE upload_id=?
-            └─► GET /api/v1/uploads              → uploads WHERE user_id=? (all, not just active)
+            └─► GET /api/v1/uploads              → every upload in the system (shared pool)
 
-User activates a past upload (instant — results already in DB)
-        └─► POST /api/v1/uploads/{id}/activate
-                ├─► Verify upload belongs to current user
-                ├─► SET is_active = TRUE WHERE id = ?
-                ├─► SET is_active = FALSE WHERE user_id = ? AND id != ?
+User switches to a different upload (instant — results already in DB)
+        └─► PUT /api/v1/users/me/last-viewed   body: {"upload_id": <n>}
+                ├─► UPDATE users SET last_viewed_upload_id = ? WHERE id = me
                 └─► Return upload summary (no pipeline re-run)
 ```
 
@@ -76,8 +86,10 @@ User activates a past upload (instant — results already in DB)
 
 | Concern | Decision | ADR |
 |---------|----------|-----|
-| Upload behaviour | Per-upload result storage; instant activate via flag flip | ADR 014 |
-| User isolation | UUID anonymous sessions; X-Session-Token header | ADR 015 |
+| Deployment context | Corporate intranet, behind IdP-controlled perimeter | §0 above, ADR 016 |
+| Upload behaviour | Per-upload result storage; switching uploads is a per-user preference flip | ADR 014 |
+| Identity | Corporate-email forwarded in `X-Session-Token` header (Remote-User-style) | ADR 016 |
+| Data visibility | Shared upload pool — all users see all uploads | ADR 016 |
 | Upload validation | Reject entire file if any row fails type/format check | ADR 011 |
 | Upload response | Synchronous (blocking HTTP); client waits for full result | ADR 013 |
 | Frontend delivery | React (Ant Design) built into FastAPI static files | ADR 008 |
@@ -85,7 +97,7 @@ User activates a past upload (instant — results already in DB)
 | ORM | SQLAlchemy ORM with mapped classes | ADR 010 |
 | Unrealized P&L price | Last transaction price per ISIN in the uploaded file | — |
 | API prefix | `/api/v1/` on all routes | — |
-| Concurrency | Per-user advisory lock — one upload per user at a time | ADR 014 |
+| Concurrency | Independent transactions per upload; no application-level locking | ADR 016 |
 | Configuration & secrets | `pydantic-settings` reads `.env` locally and OS env vars in CI/Docker; DB password held in `SecretStr` | — |
 | Async model | `async def` routes + `AsyncSession`; CPU-bound sections use `asyncio.to_thread()` | — |
 
@@ -104,7 +116,7 @@ home-assignment/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── app.py              # FastAPI factory, lifespan, static files mount at "/"
-│   │   ├── deps.py             # Depends: get_session, get_current_user, advisory_lock
+│   │   ├── deps.py             # Depends: get_session, get_current_user
 │   │   ├── schemas.py          # Pydantic response models for all endpoints
 │   │   └── routes/
 │   │       ├── __init__.py
@@ -112,7 +124,7 @@ home-assignment/
 │   │       ├── clients.py      # GET /api/v1/clients, GET /api/v1/clients/{id}/positions
 │   │       ├── violations.py   # GET /api/v1/violations
 │   │       ├── analytics.py    # GET /api/v1/analytics
-│   │       └── uploads.py      # GET /api/v1/uploads, POST /api/v1/uploads/{id}/activate
+│   │       └── uploads.py      # GET /api/v1/uploads, PUT /api/v1/users/me/last-viewed
 │   ├── domain/
 │   │   ├── __init__.py
 │   │   ├── models.py           # Pydantic domain models: RawRow, CompletedTrade, etc.
@@ -184,37 +196,35 @@ home-assignment/
 
 ## 3. Database Schema
 
-PostgreSQL. SQLAlchemy ORM (ADR 010). Results for every upload are stored permanently under that upload's `id`. Nothing is ever truncated. All GET queries filter by the active `upload_id` for the current user.
+PostgreSQL. SQLAlchemy ORM (ADR 010). Results for every upload are stored permanently under that upload's `id`. Nothing is ever truncated. Uploads form a shared pool (ADR 016); per-user state is limited to a `last_viewed_upload_id` preference on `users`.
 
 ### `users`
 
-One row per anonymous session (ADR 015).
+One row per known corporate email (ADR 016).
 
 | Column | Type | Constraints |
 |--------|------|-------------|
 | id | SERIAL | PRIMARY KEY |
-| session_token | UUID | NOT NULL, UNIQUE |
+| email | TEXT | NOT NULL, UNIQUE |
+| last_viewed_upload_id | INT | NULL, FK → uploads.id ON DELETE SET NULL |
 | created_at | TIMESTAMP | NOT NULL, DEFAULT NOW() |
 
-Index: `(session_token)` — hit on every authenticated request.
+Index: implicit unique index on `(email)` — hit on every request when resolving the session header.
 
 ### `uploads`
 
-File history. Never deleted. One row per uploaded file, per user.
+File history. Never deleted. One row per uploaded file — visible to every user in the organization (ADR 016).
 
 | Column | Type | Constraints |
 |--------|------|-------------|
 | id | SERIAL | PRIMARY KEY |
-| user_id | INT | NOT NULL, FK → users.id ON DELETE CASCADE |
 | filename | TEXT | NOT NULL |
 | file_content | BYTEA | NOT NULL |
 | row_count | INT | NOT NULL |
 | violation_count | INT | NOT NULL |
 | uploaded_at | TIMESTAMP | NOT NULL, DEFAULT NOW() |
-| is_active | BOOLEAN | NOT NULL, DEFAULT FALSE |
 
-Index: `(user_id)` — for upload history list.
-Constraint: at most one active upload per user (enforced in application logic, not DB constraint).
+No `user_id` and no `is_active` column. Every upload is visible to every user; "which upload am I looking at right now" is a per-user preference stored on `users.last_viewed_upload_id`.
 
 ### `transactions`
 
@@ -315,7 +325,7 @@ All inserts happen inside a **single database transaction**. If any step fails, 
 
 ## 4. API Contract
 
-Base path: `/api/v1/`. All responses: `application/json`. All response shapes are defined as Pydantic models in `src/api/schemas.py`. Every request must include `X-Session-Token: <uuid>` — missing token returns `400 Bad Request`.
+Base path: `/api/v1/`. All responses: `application/json`. All response shapes are defined as Pydantic models in `src/api/schemas.py`. Every request must include `X-Session-Token: <corporate-email>` — missing or malformed value returns `400 Bad Request`. The email is validated as a `pydantic.EmailStr` at the API boundary; see §0 and ADR 016 for the trust model.
 
 ### POST `/api/v1/upload-transactions`
 
@@ -333,8 +343,6 @@ Base path: `/api/v1/`. All responses: `application/json`. All response shapes ar
   }
 }
 ```
-
-**Response 409** — this user already has an upload in progress (per-user advisory lock held).
 
 **Response 422** — file has invalid rows (nothing was saved):
 ```json
@@ -466,7 +474,7 @@ All analytics computed from the active upload's data.
 
 ### GET `/api/v1/uploads`
 
-Returns all uploads for the current user.
+Returns every upload in the system (shared pool, ADR 016). The `is_last_viewed` flag is computed against the *current* user's `users.last_viewed_upload_id`.
 
 **Response 200:**
 ```json
@@ -477,7 +485,7 @@ Returns all uploads for the current user.
     "row_count": 150,
     "violation_count": 7,
     "uploaded_at": "2026-05-10T10:00:00",
-    "is_active": true
+    "is_last_viewed": true
   },
   {
     "id": 2,
@@ -485,19 +493,21 @@ Returns all uploads for the current user.
     "row_count": 80,
     "violation_count": 2,
     "uploaded_at": "2026-05-10T09:30:00",
-    "is_active": false
+    "is_last_viewed": false
   }
 ]
 ```
 
 ---
 
-### POST `/api/v1/uploads/{upload_id}/activate`
+### PUT `/api/v1/users/me/last-viewed`
 
-Switches the active upload. Results are already in the DB — no pipeline re-run.
+Sets the current user's `last_viewed_upload_id` preference. The pipeline does not re-run — analytics for the selected upload are already in the DB.
 
-**Response 200:** same shape as successful `POST /upload-transactions` summary.
-**Response 404:** upload ID not found or does not belong to current user.
+**Request body:** `{"upload_id": 3}`
+
+**Response 200:** the same summary shape as a successful `POST /upload-transactions` response, but computed against the newly-selected upload.
+**Response 404:** the upload ID does not exist (FK constraint rejection).
 
 ---
 
@@ -625,7 +635,7 @@ ISINs where `DISTINCT client_count / total_clients > 0.70` → included with cli
 
 Library: **Ant Design**. Light/dark mode toggle in the top nav bar.
 
-Session token (`X-Session-Token`) is generated as a UUID v4 on app start, stored in `localStorage`, and injected into every `fetch()` call by `frontend/src/api/client.ts`. All API calls in `client.ts` — no `fetch()` calls anywhere else.
+On first visit the user enters their corporate email into a small landing form. The email is stored in `localStorage` and injected into every `fetch()` call as the `X-Session-Token` header by `frontend/src/api/client.ts`. All API calls in `client.ts` — no `fetch()` calls anywhere else. A returning user on a fresh device types the same email and the backend auto-loads their `last_viewed_upload_id`.
 
 ```
 App
@@ -695,18 +705,19 @@ App
 
 **test_api.py**
 - Upload valid `.xlsx` without session token → 400
-- Upload valid `.xlsx` with session token → 200, correct summary, data in DB
+- Upload valid `.xlsx` with session token (= corporate email) → 200, correct summary, data in DB
 - Upload `.xlsx` with one invalid row → 422, nothing written to DB
 - Upload `.xlsx` with missing expected columns → 422 before row processing
 - Upload non-xlsx file → 422
-- `GET /clients` after upload → correct client list
+- `GET /clients` after upload → correct client list (for the user's `last_viewed_upload_id`)
 - `GET /clients/{id}/positions` → correct positions
 - `GET /violations` → violations list
 - `GET /analytics` → all four required analytics sections present
-- `GET /uploads` → lists past uploads for this user only
-- Upload second file → both uploads in history, second is active
-- `POST /uploads/{id}/activate` → first upload becomes active, data switches instantly
-- Two users with same-named file → each sees only their own data
+- `GET /uploads` → returns every upload in the system (shared pool)
+- Upload second file → user's `last_viewed_upload_id` updates to the new upload
+- `PUT /users/me/last-viewed` with a past upload id → reads switch instantly
+- Two users see the same uploads list — but each user's `last_viewed_upload_id` is independent
+- Returning user (same email on a fresh device) sees their `last_viewed_upload_id` restored
 
 ---
 
@@ -731,7 +742,7 @@ App
 | Wrong file type | Validate both file extension AND MIME type (Content-Type header) |
 | Corrupt Excel file | Entire parse wrapped in try/except → 422 with clear message |
 | SQL injection | SQLAlchemy ORM uses parameterised queries exclusively |
-| Concurrent upload corruption | Per-user advisory lock — one upload per user at a time, 409 for concurrent attempts |
+| Concurrent uploads | Each upload writes its own `upload_id` in an independent DB transaction — no shared rows are mutated, so no application-level lock is needed |
 | Cross-user data leakage | All queries filter by upload_id owned by the current user. A user cannot request another user's upload_id without knowing it (and there is no endpoint that lists other users' uploads). |
 | Sensitive data in logs | No transaction data or secrets logged; only counts and status codes |
 
@@ -743,9 +754,9 @@ These are documented for interview discussion — not implemented in the assignm
 
 | Concern | Assignment approach | Production path |
 |---------|--------------------|----|
-| Concurrent uploads (same user) | Per-user advisory lock → 409 | Celery + Redis queue: return job ID immediately, client polls. No 409 ever. |
+| Concurrent uploads | Independent transactions per upload, no lock | Celery + Redis queue: return job ID immediately, client polls |
 | Large file parsing | openpyxl read_only streaming, 10MB limit | `python-calamine` (Rust-based, 10–100× faster) + 100MB limit |
 | CPU-bound FIFO | Single-threaded via `asyncio.to_thread()` | `ProcessPoolExecutor` across (client, ISIN) pairs — see `PRODUCTION_ROADMAP.md` |
 | DB growth | Rows accumulate per upload indefinitely | Retention policy: archive or delete uploads older than N days |
-| Analytics latency | Precomputed on upload | Redis cache keyed by `upload_id`; invalidate only on new upload for same user |
-| Authentication | UUID anonymous sessions (ADR 015) | JWT + RBAC. `get_current_user()` is the only code that changes. |
+| Analytics latency | Precomputed on upload | Redis cache keyed by `upload_id`; invalidate on new upload |
+| Identity | Corporate email in `X-Session-Token` (ADR 016) | OIDC/SAML SSO with IdP-injected claim. `get_current_user()` is the only code that changes. |

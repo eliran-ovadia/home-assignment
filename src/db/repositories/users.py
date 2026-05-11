@@ -1,28 +1,62 @@
-"""Users repository — anonymous-session row lookup (ADR 015)."""
+"""
+Users repository — corporate-email identity (ADR 016).
+
+The application is deployed inside a single organization's intranet; the
+trust boundary is the network perimeter plus the verified corporate email
+chain. The frontend captures the user's email once (per device) and submits
+it on every request. Email validation (`pydantic.EmailStr`) happens at the
+API boundary; this layer treats the value as an opaque `str` so it can be
+swapped for an IdP-injected claim without touching the repository code.
+"""
 
 from __future__ import annotations
 
-import uuid
-
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import User
 
 
-async def get_or_create_by_token(session: AsyncSession, token: uuid.UUID) -> User:
+async def get_or_create_by_email(session: AsyncSession, email: str) -> User:
     """
-    Return the `User` for *token*, creating one on first sight.
+    Return the `User` for *email*, creating one on first sight.
 
-    The row is flushed (to populate `user.id`) but not committed — the caller
-    decides the transaction boundary.
+    Uses Postgres `INSERT ... ON CONFLICT (email) DO NOTHING RETURNING` so
+    two concurrent requests from the same brand-new email can't both pass a
+    `SELECT … is None` check and then race on the insert. On conflict the
+    insert is a no-op and we fall back to a follow-up `SELECT`.
+
+    The caller is responsible for validating the email format
+    (`pydantic.EmailStr` at the API boundary). This function does not
+    re-validate — it accepts whatever string was already trusted at the edge.
+
+    The row is flushed but not committed — the caller owns the transaction.
     """
-    result = await session.execute(select(User).where(User.session_token == token))
+    insert_stmt = (
+        pg_insert(User)
+        .values(email=email)
+        .on_conflict_do_nothing(index_elements=["email"])
+        .returning(User)
+    )
+    result = await session.execute(insert_stmt)
     user = result.scalar_one_or_none()
     if user is not None:
+        await session.flush()
         return user
 
-    user = User(session_token=token)
-    session.add(user)
-    await session.flush()
-    return user
+    select_stmt = select(User).where(User.email == email)
+    return (await session.execute(select_stmt)).scalar_one()
+
+
+async def update_last_viewed(session: AsyncSession, *, user_id: int, upload_id: int | None) -> None:
+    """
+    Set the user's `last_viewed_upload_id` preference.
+
+    Pass `upload_id=None` to clear the preference. The FK constraint on
+    `users.last_viewed_upload_id` will reject an *upload_id* that doesn't
+    exist; the caller may rely on that to validate the input.
+    """
+    await session.execute(
+        update(User).where(User.id == user_id).values(last_viewed_upload_id=upload_id)
+    )

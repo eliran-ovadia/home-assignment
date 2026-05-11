@@ -5,6 +5,14 @@ These queries are intentionally kept in the DB layer (not in the domain layer)
 because they're set-based aggregations Postgres can do far faster than Python.
 The output shapes are plain tuples / dicts; the API layer (PR 4) wraps them
 in Pydantic models.
+
+Postgres-specific features used: `array_agg(DISTINCT ...)` in
+`get_isin_concentration`. The spec targets PostgreSQL only (ADR 010 + SPEC §2),
+so this is intentional, but worth knowing if the storage choice ever changes.
+
+All `timestamp` columns are stored timezone-naive by convention (SPEC §3) and
+treated as UTC by the ingestion validator (PR 3). Date-bucket queries below
+inherit that convention.
 """
 
 from __future__ import annotations
@@ -12,7 +20,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import Date, Row, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +52,8 @@ async def get_client_summary(session: AsyncSession, upload_id: int) -> list[dict
     """
     counts: dict[str, dict[str, int]] = {}
 
-    def _bucket(client_id: str) -> dict[str, int]:
+    def _ensure_client_row(client_id: str) -> dict[str, int]:
+        """Return the counts dict for *client_id*, creating it on first sight."""
         return counts.setdefault(
             client_id,
             {"transaction_count": 0, "position_count": 0, "violation_count": 0},
@@ -56,7 +65,7 @@ async def get_client_summary(session: AsyncSession, upload_id: int) -> list[dict
         .group_by(Transaction.client_id)
     )
     for cid, c in (await session.execute(txn_q)).all():
-        _bucket(cid)["transaction_count"] = int(c)
+        _ensure_client_row(cid)["transaction_count"] = int(c)
 
     pos_q = (
         select(Position.client_id, func.count())
@@ -64,7 +73,7 @@ async def get_client_summary(session: AsyncSession, upload_id: int) -> list[dict
         .group_by(Position.client_id)
     )
     for cid, c in (await session.execute(pos_q)).all():
-        _bucket(cid)["position_count"] = int(c)
+        _ensure_client_row(cid)["position_count"] = int(c)
 
     vio_q = (
         select(Violation.client_id, func.count())
@@ -72,7 +81,7 @@ async def get_client_summary(session: AsyncSession, upload_id: int) -> list[dict
         .group_by(Violation.client_id)
     )
     for cid, c in (await session.execute(vio_q)).all():
-        _bucket(cid)["violation_count"] = int(c)
+        _ensure_client_row(cid)["violation_count"] = int(c)
 
     return [{"client_id": cid, **vals} for cid, vals in sorted(counts.items())]
 
@@ -85,6 +94,9 @@ async def get_isin_concentration(
 
     "Held" means `positions.quantity > 0` — closed-out positions don't count.
     Returns `[]` when no client has an open position.
+
+    Uses Postgres `array_agg(DISTINCT client_id)` to fetch the client list in
+    the same round trip as the count.
     """
     total_clients_q = select(func.count(distinct(Position.client_id))).where(
         Position.upload_id == upload_id, Position.quantity > 0
@@ -122,7 +134,14 @@ async def get_isin_concentration(
 async def get_most_traded_day(
     session: AsyncSession, upload_id: int
 ) -> tuple[datetime.date, int] | None:
-    """The single calendar day with the most transactions, or None if empty."""
+    """
+    The single calendar day with the most transactions, or None if empty.
+
+    Date bucketing is performed against the stored timezone-naive timestamp
+    (see module docstring) — i.e. the UTC date. If a future change adopts
+    `TIMESTAMPTZ`, swap `cast(... AS DATE)` for `date_trunc('day', ... AT TIME
+    ZONE 'UTC')` to keep the boundary explicit.
+    """
     day = func.cast(Transaction.timestamp, Date).label("day")
     stmt = (
         select(day, func.count())
@@ -131,10 +150,10 @@ async def get_most_traded_day(
         .order_by(func.count().desc())
         .limit(1)
     )
-    row = (await session.execute(stmt)).first()
+    row: Row[tuple[datetime.date, int]] | None = (await session.execute(stmt)).first()
     if row is None:
         return None
-    return cast(datetime.date, row[0]), int(row[1])
+    return row[0], int(row[1])
 
 
 async def get_top_realized_pnl_client(
@@ -161,7 +180,10 @@ async def get_win_rates(session: AsyncSession, upload_id: int) -> list[dict[str,
 
     The FIFO engine (PR 3) populates `winning_trades` and `total_trades`
     during upload processing. Clients with no completed trades are skipped
-    here so the API layer doesn't have to filter again.
+    so the API layer doesn't have to filter again. We also exclude rows
+    where `winning_trades` is null while `total_trades` is set — that
+    combination should never be written, but filtering here defends the
+    `int(...)` cast below against a malformed upload.
     """
     stmt = (
         select(
@@ -173,6 +195,7 @@ async def get_win_rates(session: AsyncSession, upload_id: int) -> list[dict[str,
             ClientAnalytic.upload_id == upload_id,
             ClientAnalytic.total_trades.is_not(None),
             ClientAnalytic.total_trades > 0,
+            ClientAnalytic.winning_trades.is_not(None),
         )
         .order_by(ClientAnalytic.client_id)
     )
