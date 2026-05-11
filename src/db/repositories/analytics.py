@@ -18,7 +18,6 @@ inherit that convention.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -30,7 +29,7 @@ from src.db.models import ClientAnalytic, Position, Transaction, Violation
 
 async def get_top_traded_isins(
     session: AsyncSession, upload_id: int, limit: int = 3
-) -> Sequence[tuple[str, int]]:
+) -> list[tuple[str, int]]:
     """Top N ISINs by transaction count, descending. Empty if no transactions."""
     stmt = (
         select(Transaction.isin, func.count().label("c"))

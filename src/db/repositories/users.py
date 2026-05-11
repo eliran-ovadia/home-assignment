@@ -27,6 +27,15 @@ async def get_or_create_by_email(session: AsyncSession, email: str) -> User:
     `SELECT … is None` check and then race on the insert. On conflict the
     insert is a no-op and we fall back to a follow-up `SELECT`.
 
+    Isolation assumption: the fallback `SELECT` is safe under `READ COMMITTED`
+    (the asyncpg / PostgreSQL default), because by the time the conflicting
+    INSERT returns we know the winning row was already committed and is
+    visible to subsequent statements. Under `REPEATABLE READ` or
+    `SERIALIZABLE` the snapshot taken at the first statement may predate
+    that commit and `scalar_one()` could raise `NoResultFound`. If the
+    session's isolation level is ever raised, this function needs to
+    re-issue the SELECT in a fresh sub-transaction or sleep-retry.
+
     The caller is responsible for validating the email format
     (`pydantic.EmailStr` at the API boundary). This function does not
     re-validate — it accepts whatever string was already trusted at the edge.

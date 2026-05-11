@@ -159,6 +159,12 @@ class Position(Base):
     )
     client_id: Mapped[str] = mapped_column(Text, nullable=False)
     isin: Mapped[str] = mapped_column(Text, nullable=False)
+    # Dual-default pattern: `default=Decimal(0)` applies when a `Position(...)`
+    # is constructed via the ORM without an explicit value (defence in depth —
+    # not relied on in practice, FIFO always supplies every field). The matching
+    # `server_default=sa.text("0")` in the migration applies to raw INSERTs and
+    # is the one that actually fires for the bulk_insert path. Keep both in
+    # sync if one ever changes.
     quantity: Mapped[Decimal] = mapped_column(_MONEY, nullable=False, default=Decimal(0))
     avg_cost: Mapped[Decimal] = mapped_column(_MONEY, nullable=False, default=Decimal(0))
     realized_pnl: Mapped[Decimal] = mapped_column(_MONEY, nullable=False, default=Decimal(0))
