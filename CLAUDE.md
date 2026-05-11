@@ -28,12 +28,12 @@ Before introducing any library, pattern, or architectural choice, document **why
 | Upload behaviour | Per-upload result storage; activate = instant flag flip | [ADR 014](docs/decisions/014-per-upload-result-storage.md) extends [ADR 009](docs/decisions/009-replace-on-upload.md) |
 | Upload validation | Reject entire file on any invalid row | [ADR 011](docs/decisions/011-reject-on-defective-row.md) |
 | Upload response | Synchronous blocking HTTP | [ADR 013](docs/decisions/013-synchronous-upload-response.md) |
-| Identity | Corporate email forwarded in `X-Session-Token` header (deployment context: corporate intranet — see [SPEC §0](docs/SPEC.md)) | [ADR 016](docs/decisions/016-email-as-identity.md) (supersedes [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md)) |
+| Identity | Corporate email forwarded in `X-Session-Token` header (deployment context: corporate intranet — see [SPEC §0](SPEC.md)) | [ADR 016](docs/decisions/016-email-as-identity.md) (supersedes [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md)) |
 | Data visibility | Shared upload pool — every user sees every upload; per-user `last_viewed_upload_id` preference | [ADR 016](docs/decisions/016-email-as-identity.md) |
 
 ## Domain Architecture
 
-The full technical specification lives in [`docs/SPEC.md`](docs/SPEC.md). Summary:
+The full technical specification lives in [`docs/SPEC.md`](SPEC.md). Summary:
 
 ```
 src/

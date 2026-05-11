@@ -7,7 +7,7 @@ risk concentration, invalid values), and surfaces per-client analytics.
 **Stack:** Python 3.12 · FastAPI · SQLAlchemy ORM + Alembic · PostgreSQL 16 ·
 React 18 + Vite + Ant Design. Packaged as a multi-stage Docker build.
 
-**Where to read more:** [`docs/SPEC.md`](docs/SPEC.md) (full spec) ·
+**Where to read more:** [`docs/SPEC.md`](SPEC.md) (full spec) ·
 [`docs/decisions/`](docs/decisions/) (ADRs) · [`samples/`](samples/) (test files) ·
 [`postman/`](postman/) (Postman collection).
 
