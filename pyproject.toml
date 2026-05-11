@@ -59,10 +59,15 @@ ignore = [
 python-version = "3.12"
 
 # ── Pytest ───────────────────────────────────────────────────────────────────
+# `--cov-fail-under` is NOT in addopts because unit-only runs can't reach the
+# DB layer (that needs integration tests, PR 5). The 80% gate lives in
+# `make test` instead — that target runs the full suite where the threshold
+# is meaningful. Unit-only and integration-only runs still produce a coverage
+# report but do not enforce the gate.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
+addopts = "--cov=src --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src"]

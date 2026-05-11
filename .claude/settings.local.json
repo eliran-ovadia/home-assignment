@@ -11,7 +11,8 @@
       "Bash(DB_PASSWORD=test123 python -c \"from src.core.config import settings; from src.core.database import _build_database_url; print\\(_build_database_url\\(\\)\\)\")",
       "Bash(git checkout *)",
       "Bash(DB_PASSWORD=test python *)",
-      "Bash(DB_PASSWORD=test alembic upgrade head --sql)"
+      "Bash(DB_PASSWORD=test alembic upgrade head --sql)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }
