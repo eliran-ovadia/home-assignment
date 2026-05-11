@@ -16,7 +16,7 @@ import anthropic
 import httpx
 
 REPO_ROOT = Path(__file__).parent.parent
-MAX_DIFF_CHARS = 80_000
+MAX_DIFF_CHARS = 500_000
 MODEL = "claude-sonnet-4-6"
 
 

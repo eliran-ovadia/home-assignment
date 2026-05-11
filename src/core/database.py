@@ -35,7 +35,7 @@ _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
-def _build_database_url() -> str:
+def build_database_url() -> str:
     """Compose the asyncpg URL from settings."""
     user = quote_plus(settings.db_user)
     password = quote_plus(settings.db_password.get_secret_value())
@@ -51,7 +51,7 @@ def init_db() -> None:
     if _engine is not None:
         return
     _engine = create_async_engine(
-        _build_database_url(),
+        build_database_url(),
         # `pool_pre_ping` issues a cheap SELECT 1 before handing out a connection,
         # which prevents stale-connection errors when Postgres or a load balancer
         # closes idle sockets between requests.

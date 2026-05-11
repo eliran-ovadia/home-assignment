@@ -28,7 +28,8 @@ Before introducing any library, pattern, or architectural choice, document **why
 | Upload behaviour | Per-upload result storage; activate = instant flag flip | [ADR 014](docs/decisions/014-per-upload-result-storage.md) extends [ADR 009](docs/decisions/009-replace-on-upload.md) |
 | Upload validation | Reject entire file on any invalid row | [ADR 011](docs/decisions/011-reject-on-defective-row.md) |
 | Upload response | Synchronous blocking HTTP | [ADR 013](docs/decisions/013-synchronous-upload-response.md) |
-| User sessions | UUID anonymous sessions; X-Session-Token header | [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md) |
+| Identity | Corporate email forwarded in `X-Session-Token` header (deployment context: corporate intranet — see [SPEC §0](docs/SPEC.md)) | [ADR 016](docs/decisions/016-email-as-identity.md) (supersedes [ADR 015](docs/decisions/015-uuid-anonymous-sessions.md)) |
+| Data visibility | Shared upload pool — every user sees every upload; per-user `last_viewed_upload_id` preference | [ADR 016](docs/decisions/016-email-as-identity.md) |
 
 ## Domain Architecture
 
@@ -51,9 +52,9 @@ tests/          # unit/ (no DB) and integration/ (requires DB)
 
 **Async model:** All routes use `async def` with `AsyncSession` (asyncpg driver). CPU-bound sections (openpyxl parsing, FIFO computation) use `await asyncio.to_thread(fn, args)` to run in a thread pool without blocking the event loop. GET routes are pure async I/O. The upload route combines async DB calls with `asyncio.to_thread` for compute steps.
 
-**Concurrency:** Per-user PostgreSQL advisory lock (`pg_try_advisory_lock(user_id)`). Different users can upload simultaneously; the same user cannot. Concurrent same-user uploads receive HTTP 409.
+**Concurrency:** No application-level locking. Each upload writes its own `upload_id` in an independent transaction, so concurrent uploads from any users do not conflict.
 
-**User isolation:** Every request carries `X-Session-Token: <uuid>`. The `get_current_user()` FastAPI dependency resolves this to a `users` row (creating one on first sight). All DB queries filter by the active `upload_id` for the current user — no user can read another user's data.
+**Identity (corporate intranet deployment):** Every request carries `X-Session-Token: <corporate-email>` (validated as `pydantic.EmailStr` at the API boundary). The `get_current_user()` FastAPI dependency resolves the email to a `users` row (creating one on first sight). All uploads are visible to every user; the only per-user state is `users.last_viewed_upload_id`, which is what makes a returning user (possibly on a new device) auto-load their last-selected upload. See `docs/SPEC.md` §0 for the trust model.
 
 ## Development Commands
 
@@ -88,7 +89,7 @@ When changing a tool or adding one, update **all** of these files. This map is t
 | Configuration | `src/core/config.py` (`Settings`), `.env.example`, `docker-compose.yml` env block, `README.md` setup section |
 | Python version | `pyproject.toml` `requires-python`, `Dockerfile` base image, `ci.yml` `python-version`, `[tool.ruff] target-version`, `[tool.ty.environment] python-version`, `docs/decisions/001` |
 | ORM models | `src/db/models.py`, `migrations/versions/`, `docs/decisions/010` |
-| User sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (localStorage + header injection), `docs/decisions/015` |
+| Identity / sessions | `src/api/deps.py` (`get_current_user`), `src/db/repositories/users.py`, `frontend/src/api/client.ts` (email-in-localStorage + header injection), `docs/decisions/016`, `docs/SPEC.md` §0 |
 
 ## Configuration & Secrets
 

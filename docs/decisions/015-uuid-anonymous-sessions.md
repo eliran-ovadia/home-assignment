@@ -1,7 +1,9 @@
 # ADR 015: UUID-Based Anonymous User Sessions
 
 **Date:** 2026-05-10
-**Status:** Accepted
+**Status:** Superseded by [ADR 016](016-email-as-identity.md) on 2026-05-11
+
+> This decision is preserved for historical record. The system originally identified users by a frontend-generated UUID stored in `localStorage`. We replaced it with corporate-email identity (ADR 016) because (a) UUIDs in `localStorage` do not follow users across devices, breaking the "returning user sees their last selection" requirement, and (b) the data-isolation use case the UUID model supported was itself dropped — all uploads are now a shared pool. The "PR 2 design pivot" section of `AI_USAGE.md` documents the reasoning.
 
 ## Context
 
