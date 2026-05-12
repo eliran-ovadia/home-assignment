@@ -74,14 +74,6 @@ async def close_db() -> None:
     _sessionmaker = None
 
 
-def get_engine() -> AsyncEngine:
-    """Return the active engine. Raises if `init_db()` hasn't been called."""
-    engine = _engine
-    if engine is None:
-        raise RuntimeError("Database engine not initialised. Call init_db() first.")
-    return engine
-
-
 async def get_session() -> AsyncIterator[AsyncSession]:
     """
     Yield an `AsyncSession` for one request and clean it up on exit.

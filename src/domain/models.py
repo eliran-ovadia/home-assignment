@@ -173,17 +173,3 @@ class ClientAnalyticsData:
     avg_holding_days: Decimal | None = None
     winning_trades: int | None = None
     total_trades: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ProcessingResult:
-    """
-    Top-level output of the upload pipeline. Bundles everything the API
-    layer needs to persist in one DB transaction.
-    """
-
-    valid_rows: list[ValidatedRow]
-    positions: list[Position]
-    violations: list[ViolationRecord]
-    client_analytics: list[ClientAnalyticsData]
-    completed_trades: list[CompletedTrade]

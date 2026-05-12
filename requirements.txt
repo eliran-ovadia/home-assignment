@@ -1,3 +1,11 @@
+# Runtime dependencies — kept in sync with `pyproject.toml` [project] dependencies.
+# Install with `pip install -r requirements.txt` (or `pip install .` for the full
+# project install which reads pyproject.toml directly).
+#
+# Dev tooling (ruff, ty, pytest, pytest-cov, pytest-asyncio) is in
+# pyproject.toml [project.optional-dependencies] `dev` — install with
+# `pip install -e ".[dev]"`.
+
 fastapi>=0.115
 uvicorn[standard]>=0.32
 sqlalchemy[asyncio]>=2.0
@@ -8,5 +16,3 @@ pydantic-settings>=2.6
 openpyxl>=3.1
 python-multipart>=0.0.20
 httpx>=0.28
-
-anthropic

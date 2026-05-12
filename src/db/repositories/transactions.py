@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import insert as sa_insert
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Transaction
@@ -22,14 +21,3 @@ async def bulk_insert(session: AsyncSession, rows: Sequence[dict[str, Any]]) -> 
     if not rows:
         return
     await session.execute(sa_insert(Transaction), rows)
-
-
-async def get_by_upload(session: AsyncSession, upload_id: int) -> Sequence[Transaction]:
-    """Return all transactions for *upload_id*, ordered by timestamp."""
-    stmt = (
-        select(Transaction)
-        .where(Transaction.upload_id == upload_id)
-        .order_by(Transaction.timestamp, Transaction.id)
-    )
-    result = await session.execute(stmt)
-    return result.scalars().all()

@@ -9,7 +9,7 @@ ADR 004 chose SQLAlchemy Core with hand-written SQL to maximise explicitness and
 
 ## Decision
 
-Use SQLAlchemy ORM with mapped dataclasses (`MappedColumn`, `DeclarativeBase`). All database access goes through a `Session`. `db/models.py` defines the mapped classes. Repositories use `session.query()` / `session.add()` / `session.bulk_insert_mappings()` rather than raw `select()` / `insert()` constructions.
+Use SQLAlchemy 2.0 ORM with the modern `Mapped[]` / `mapped_column` declarative style. All database access goes through an `AsyncSession` (asyncpg driver). `db/models.py` defines the mapped classes. Repositories use the SQLAlchemy 2.0 idiom: `session.execute(select(...))` for reads, `session.add()` for single inserts, and `session.execute(insert(Model).values(...))` over a list for bulk inserts.
 
 SQLAlchemy is still responsible for connection pooling, transaction management, and parameterised queries (preventing SQL injection). The ORM layer is added on top.
 
@@ -26,5 +26,5 @@ SQLAlchemy is still responsible for connection pooling, transaction management, 
 - `db/schema.py` is replaced by `db/models.py` containing ORM-mapped classes.
 - Repositories are significantly simpler — no manual column extraction from `Row` objects.
 - Alembic migrations continue to work unchanged (Alembic reads the ORM models via `Base.metadata`).
-- Bulk inserts use `session.bulk_insert_mappings()` for performance (bypasses individual object instantiation overhead).
+- Bulk inserts use `session.execute(insert(Model), list_of_dicts)` — the SQLAlchemy 2.0 replacement for `bulk_insert_mappings()`, with the same `executemany`-driven performance characteristics.
 - The ADR 004 rationale (explicit SQL, no magic) is still valid for production systems with complex query requirements; for this project's scope, ORM is the right trade-off.
