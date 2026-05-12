@@ -55,11 +55,11 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=_lifespan,
     )
-    app.include_router(upload.router, prefix=API_V1_PREFIX, tags=["upload"])
-    app.include_router(clients.router, prefix=API_V1_PREFIX, tags=["clients"])
-    app.include_router(violations.router, prefix=API_V1_PREFIX, tags=["violations"])
     app.include_router(analytics.router, prefix=API_V1_PREFIX, tags=["analytics"])
+    app.include_router(clients.router, prefix=API_V1_PREFIX, tags=["clients"])
+    app.include_router(upload.router, prefix=API_V1_PREFIX, tags=["upload"])
     app.include_router(uploads.router, prefix=API_V1_PREFIX, tags=["uploads"])
+    app.include_router(violations.router, prefix=API_V1_PREFIX, tags=["violations"])
 
     # Static-file mount at "/" comes *after* the API routers so it doesn't
     # shadow them. `html=True` serves `index.html` on the bare root path.

@@ -19,17 +19,6 @@ async def bulk_insert(session: AsyncSession, rows: Sequence[dict[str, Any]]) -> 
     await session.execute(sa_insert(Position), rows)
 
 
-async def get_all_by_upload(session: AsyncSession, upload_id: int) -> Sequence[Position]:
-    """Return every position for *upload_id*, ordered by (client_id, isin)."""
-    stmt = (
-        select(Position)
-        .where(Position.upload_id == upload_id)
-        .order_by(Position.client_id, Position.isin)
-    )
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-
 async def get_by_upload_and_client(
     session: AsyncSession, *, upload_id: int, client_id: str
 ) -> Sequence[Position]:
