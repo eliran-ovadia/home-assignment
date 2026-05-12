@@ -22,7 +22,7 @@ Use **FastAPI**.
 
 ## Consequences
 
-- OpenAPI docs are available at `/docs` and `/redoc` with zero extra configuration
+- OpenAPI docs are available at `/api/docs` and `/api/redoc` with zero extra configuration (the `/api` prefix keeps them out of the way of the React static bundle mounted at `/`)
 - All request/response shapes are Pydantic models — validation and serialisation are automatic
 - Async endpoints are first-class, enabling concurrent DB queries and external HTTP calls
 - `uvicorn` is used as the ASGI server

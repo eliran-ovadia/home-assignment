@@ -1,7 +1,7 @@
 # ADR 009: Replace-on-Upload (Idempotent Ingestion)
 
 **Date:** 2026-05-09
-**Status:** Accepted
+**Status:** Accepted — extended by [ADR 014](014-per-upload-result-storage.md) (per-upload result storage replaces "truncate before write" with "scope by `upload_id`")
 
 ## Context
 
@@ -9,7 +9,9 @@ When a user uploads a new Excel file, the system must decide what to do with exi
 
 ## Decision
 
-Each upload **replaces** all existing data. The system truncates the `transactions`, `positions`, and `violations` tables before processing the new file. The same file uploaded twice produces identical results.
+Each upload is processed **independently** — FIFO, violations, and analytics for one upload never see another upload's transactions. The same file uploaded twice produces identical results within its own scope.
+
+The original formulation of this ADR called for truncating the result tables on every upload. ADR 014 refined this: instead of *deleting* old rows, every result table carries an `upload_id` FK and queries scope reads to the current user's `last_viewed_upload_id`. The semantic guarantee (each upload reflects exactly one file's worth of data) is unchanged; only the implementation moved from "delete + insert" to "insert with scope".
 
 ## Alternatives Considered
 

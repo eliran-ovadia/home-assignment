@@ -24,9 +24,9 @@ Use the synchronous model. The client waits for the full result in a single HTTP
 ## Consequences
 
 - The frontend must show a loading state while the upload is being processed — a response will not arrive for several seconds on large files.
-- A user who uploads the same file twice simultaneously receives a `409 Conflict` on the second request (per-user advisory lock — see ADR 014). The second request is rejected, not queued.
-- The blocking model is correct for a single-operator tool. It is NOT correct for high-concurrency production use.
+- Concurrent uploads (same user or different users) do not block each other. Each request runs in its own DB transaction and writes its own `upload_id`. There is no application-level lock; see ADR 016 for the shared-pool model that makes locking unnecessary.
+- The blocking model is correct for a single-operator tool and an intranet deployment. It is NOT correct for high-concurrency production use against a public surface, where the HTTP connection-hold cost and the lack of progress feedback become real problems.
 
 ## Production Path
 
-Documented in `docs/PRODUCTION_ROADMAP.md` §2: Celery + Redis task queue. The upload route changes to `POST → 202 + job_id`. The frontend polls `GET /api/v1/jobs/{id}` for status. Users never receive a 409 under concurrent load.
+Documented in `docs/PRODUCTION_ROADMAP.md` §2: Celery + Redis task queue. The upload route changes to `POST → 202 + job_id`. The frontend polls `GET /api/v1/jobs/{id}` for status (or subscribes via SSE/WebSocket).

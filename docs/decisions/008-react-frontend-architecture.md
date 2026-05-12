@@ -9,7 +9,7 @@ The assignment requires a simple UI that uploads an Excel file and displays posi
 
 ## Decision
 
-React is built once via `npm run build` (Vite) and the output (`frontend/dist/`) is served by FastAPI as static files mounted at `/`. All API routes live under `/api/v1/`. A multi-stage Dockerfile handles both build steps: Stage 1 (Node 20) builds the React app, Stage 2 (Python 3.12) copies the built assets into the final image.
+React is built once via `npm run build` (Vite) and the output (`frontend/dist/`) is served by FastAPI as static files mounted at `/`. All API routes live under `/api/v1/`. The Dockerfile uses **three stages**: (1) `node:20-alpine` runs `npm ci && npm run build` to produce `frontend/dist/`; (2) `python:3.12-slim` builds a `.venv` with the backend deps; (3) a lean `python:3.12-slim` runtime copies the venv plus the built React assets and runs uvicorn. The split keeps the final image small and reproducible.
 
 ## Alternatives Considered
 
