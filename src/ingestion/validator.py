@@ -172,9 +172,23 @@ def _validate_number(
 
 
 def _validate_timestamp(raw: RawRow, value: Any, hint: str | None) -> RowError | datetime.datetime:
-    """Timestamp must be a `datetime`; tz-aware values are normalised to naïve UTC."""
+    """
+    Timestamp must be a `datetime` *or* an ISO-8601 string. Tz-aware values
+    are normalised to naïve UTC.
+
+    Excel cells formatted as Date/Time arrive as `datetime` objects; cells
+    formatted as Text (or files written by tools that don't apply a date
+    format) arrive as strings. We accept both shapes so a workbook with
+    `"2026-01-01T10:00:00"` text cells doesn't fail the upload — that's the
+    shape the assignment's sample file uses.
+    """
     if value is None:
         return _err(raw, hint, "timestamp", "Missing required field: timestamp")
+    if isinstance(value, str):
+        try:
+            value = datetime.datetime.fromisoformat(value.strip())
+        except ValueError:
+            return _err(raw, hint, "timestamp", f"Expected an ISO-8601 datetime, got: {value!r}")
     if not isinstance(value, datetime.datetime):
         return _err(raw, hint, "timestamp", f"Expected a datetime, got: {value!r}")
     if value.tzinfo is not None:

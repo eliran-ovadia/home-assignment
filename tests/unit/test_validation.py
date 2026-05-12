@@ -91,9 +91,17 @@ def test_empty_string_field_is_rejected() -> None:
     assert any(e.column == "transaction_id" and "Missing" in e.reason for e in errors)
 
 
-def test_non_datetime_timestamp_is_rejected() -> None:
-    _, errors = validate_rows([_row(timestamp="2026-01-01")])  # string, not datetime
-    assert any(e.column == "timestamp" for e in errors)
+def test_unparseable_timestamp_string_is_rejected() -> None:
+    _, errors = validate_rows([_row(timestamp="not-a-date")])
+    assert any(e.column == "timestamp" and "ISO-8601" in e.reason for e in errors)
+
+
+def test_iso_string_timestamp_is_accepted() -> None:
+    """Excel cells formatted as text deliver timestamps as ISO strings (the
+    shape used by the assignment's sample file). They should parse cleanly."""
+    valid, errors = validate_rows([_row(timestamp="2026-01-01T10:00:00")])
+    assert errors == []
+    assert valid[0].timestamp == datetime.datetime(2026, 1, 1, 10, 0)
 
 
 def test_tz_aware_timestamp_is_normalized_to_naive_utc() -> None:
